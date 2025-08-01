@@ -143,9 +143,8 @@ get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
   if(normalise_data){
     col.names<-names(all_dat)
     # only for prev resid and current simflow
-    # should be computed already by get_CDNP_clusters
-    # prevresid_norm_dat<-normalise(all_dat[,1])
-    # simflow_norm_dat<-normalise(all_dat[,2])
+    prevresid_norm_dat<-normalise(all_dat[,1])
+    simflow_norm_dat<-normalise(all_dat[,2])
     all_dat<-cbind(prevresid_norm_dat$normalised_data,
                    simflow_norm_dat$normalised_data,
                    all_dat[,3])
@@ -248,6 +247,7 @@ get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
               prevresid_norm_dat=prevresid_norm_dat,
               simflow_norm_dat=simflow_norm_dat))
 }
+
 
 
 CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed=NA,sampling_method=2){
