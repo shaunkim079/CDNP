@@ -1,28 +1,18 @@
 #' Normalise values to fit between 0 and 1
 #'
 #' @param vals numeric values to be normalised
-#' @param offset numeric value to be subtracted to data in case of negatives. When NA (default) this is computed.
 #' @param min_vals numeric value representing the minimum value of the population
 #' @param max_vals numeric value representing the maximum value of the population
 #'
-#' @return list containing normalised values, offset, min_vals and max_vals
+#' @return list containing normalised values, min_vals and max_vals
 #' @export
 #'
 #' @examples
-#' set.seed(40)
-#' dat<-runif(100,-10,50)
-#' norm_dat<-normalise(dat)
+#' library(CDNP)
+#' norm_dat<-normalise(eg_data$resid)
 #' norm_dat
-normalise<-function(vals,offset=NA,min_vals=NA,max_vals=NA){
+normalise<-function(vals,min_vals=NA,max_vals=NA){
   # Normalise values to fit between 0 and 1
-  if(is.na(min_vals)){
-    # compute these numbers based vals
-    if(min(vals)<0){
-      offset<-min(vals)
-    }
-  }
-
-  if(!is.na(offset)) vals<-vals-offset
 
   if(is.na(min_vals)){
     min_vals<-min(vals)
@@ -33,9 +23,37 @@ normalise<-function(vals,offset=NA,min_vals=NA,max_vals=NA){
 
   out<-(vals - min_vals) / (max_vals - min_vals)
 
-  return(list(normalised_data=out,offset=offset,min_vals=min_vals,max_vals=max_vals))
+  return(list(normalised_data=out,min_vals=min_vals,max_vals=max_vals))
 }
 
+
+
+#' Get the k-means clusters based on error and streamflow data
+#'
+#' @param nclusters number of clusters to use
+#' @param nbin number of bins for the error residual. Equal to the number of intervals minus 1.
+#' @param ts_data_resid vector of residual errors. Should be the same length as ts_data_simflow.
+#' @param ts_data_simflow vector of streamflow. Should be the same length as ts_data_resid.
+#' @param use_quantile_spacing logical; if true uses quantiles to determine the error intervals. If false, uses equal size spacing of intervals.
+#' @param normalise_data logical; if true uses min-max normalisation for residual (at t-1) and streamflow.
+#'
+#' @return returns a list of objects which is used by get_CDNP_posterior_lookup:\cr\cr
+#' \verb{    }resid_intervals: vector of error residual intervals\cr\cr
+#' \verb{    }kmeans_model: k-mean model object\cr\cr
+#' \verb{    }orig_resid: vector; error residual (same as input)\cr\cr
+#' \verb{    }orig_simflow: vector; streamflow (same as input)\cr\cr
+#' \verb{    }normalise_data: logical; if true uses min-max normalisation for residual (at t-1) and streamflow (same as input).\cr\cr
+#' \verb{    }prevresid_norm_dat: list; results from normalisation of residual (at t-1)\cr\cr
+#' \verb{    }simflow_norm_dat: list; results from normalisation of streamflow
+#' @export
+#'
+#' @examples
+#' library(CDNP)
+#' CDNP_clusters_out<-get_CDNP_clusters(nclusters=10,
+#'                                      nbin=8,
+#'                                      ts_data_resid=eg_data$resid,
+#'                                      ts_data_simflow=eg_data$sim)
+#' CDNP_clusters_out
 get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_quantile_spacing=T,normalise_data=T){
   # nclusters<-10
   # ts_data<-orig_resid
@@ -108,6 +126,7 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
               simflow_norm_dat=simflow_norm_dat))
 }
 
+
 predict_kmeans <- function(new_data, kmeans_model) {
   centers <- kmeans_model$centers
   n_new_data <- nrow(new_data)
@@ -124,6 +143,7 @@ predict_kmeans <- function(new_data, kmeans_model) {
   }
   return(predicted_clusters)
 }
+
 
 get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
   orig_simflow<-get_CDNP_clusters_output$orig_simflow
@@ -271,10 +291,10 @@ CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed
     cur_simflow<-simflow[dd]
     # find the cluster condition
     if(normalise_data){
-      new_data<-data.frame(ts_data_resid_tminus1=normalise(prev_error,offset=prevresid_norm_dat$offset,
+      new_data<-data.frame(ts_data_resid_tminus1=normalise(prev_error,
                                                            min_vals = prevresid_norm_dat$min_vals,
                                                            max_vals = prevresid_norm_dat$max_vals)$normalised_data,
-                           ts_data_simflow=normalise(cur_simflow,offset=simflow_norm_dat$offset,
+                           ts_data_simflow=normalise(cur_simflow,
                                                      min_vals = simflow_norm_dat$min_vals,
                                                      max_vals = simflow_norm_dat$max_vals)$normalised_data)
     } else {

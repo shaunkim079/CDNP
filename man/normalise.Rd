@@ -4,26 +4,23 @@
 \alias{normalise}
 \title{Normalise values to fit between 0 and 1}
 \usage{
-normalise(vals, offset = NA, min_vals = NA, max_vals = NA)
+normalise(vals, min_vals = NA, max_vals = NA)
 }
 \arguments{
 \item{vals}{numeric values to be normalised}
-
-\item{offset}{numeric value to be subtracted to data in case of negatives. When NA (default) this is computed.}
 
 \item{min_vals}{numeric value representing the minimum value of the population}
 
 \item{max_vals}{numeric value representing the maximum value of the population}
 }
 \value{
-list containing normalised values, offset, min_vals and max_vals
+list containing normalised values, min_vals and max_vals
 }
 \description{
 Normalise values to fit between 0 and 1
 }
 \examples{
-set.seed(40)
-dat<-runif(100,-10,50)
-norm_dat<-normalise(dat)
+library(CDNP)
+norm_dat<-normalise(eg_data$resid)
 norm_dat
 }
