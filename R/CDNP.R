@@ -54,7 +54,7 @@ normalise<-function(vals,min_vals=NA,max_vals=NA){
 #'                                      ts_data_resid=eg_data$resid,
 #'                                      ts_data_simflow=eg_data$sim)
 #' CDNP_clusters_out
-get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_quantile_spacing=T,normalise_data=T){
+get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_quantile_spacing=T,normalise_data=T,seed=NA){
   # nclusters<-10
   # ts_data<-orig_resid
   # ts_data_resid<-orig_resid
@@ -85,6 +85,7 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
   if(num_unique_points<nclusters){
     cat("Number of unique data points is less than specified nclusters. Will continue with",num_unique_points,"clusters\n")
   }
+  if(!is.na(seed)) set.seed(seed)
   km<-kmeans(all_dat[,1:2],min(num_unique_points,nclusters),nstart = 10,iter.max = 100)
   # km$cluster
   # km$centers
@@ -127,24 +128,29 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
 }
 
 
-predict_kmeans <- function(new_data, kmeans_model) {
-  centers <- kmeans_model$centers
-  n_new_data <- nrow(new_data)
-  n_clusters <- nrow(centers)
 
-  # Initialize a vector to store predicted cluster assignments
-  predicted_clusters <- numeric(n_new_data)
-
-  for (j in 1:n_new_data) {
-    distances <- apply(centers, 1, function(x) {
-      dist(rbind(new_data[j, ], x))
-    })
-    predicted_clusters[j] <- which.min(distances)
-  }
-  return(predicted_clusters)
-}
-
-
+#' Create lookup table that determines the conditional probabilities
+#'
+#' @param get_CDNP_clusters_output list; output from get_CDNP_clusters function
+#'
+#' @return list containing:\cr\cr
+#' \verb{    } posterior_lookup: data.frame; table of conditions and probabilities\cr\cr
+#' \verb{    } bin_residuals: list; contains the residuals for each bin (for resampling)\cr\cr
+#' \verb{    } normalise_data: logical; whether the residual and streamflow are normalised
+#' \verb{    } prevresid_norm_dat: normalised previous day residual data
+#' \verb{    } simflow_norm_dat: normalised streamflow data
+#' @export
+#'
+#' @examples
+#' library(CDNP)
+#' # first run get_CDNP_clusters function
+#' CDNP_clusters_out<-get_CDNP_clusters(nclusters=10,
+#'                                      nbin=8,
+#'                                      ts_data_resid=eg_data$resid,
+#'                                      ts_data_simflow=eg_data$sim)
+#' # get CNDP lookup
+#' CDNP_posterior_lookup<-get_CDNP_posterior_lookup(CDNP_clusters_out)
+#' CDNP_posterior_lookup
 get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
   orig_simflow<-get_CDNP_clusters_output$orig_simflow
   orig_resid<-get_CDNP_clusters_output$orig_resid
@@ -176,10 +182,10 @@ get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
   all_posterior_lookup<-matrix(NA,nrow=(length(resid_intervals)-1)*nrow(kmeans_model$centers),ncol=11)
 
   all_bin_residuals<-list()
-  cat("Computing",nrow(kmeans_model$centers),"clusters. Remaining:")
+  # cat("Computing",nrow(kmeans_model$centers),"clusters. Remaining:")
   counter<-0
   for(rr in 1:nrow(kmeans_model$centers)){
-    cat(".",nrow(kmeans_model$centers)-rr,".")
+    # cat(".",nrow(kmeans_model$centers)-rr,".")
     for(res_cur_indx in 1:(length(resid_intervals)-1)){
       # res_cur_indx<-1
       # res_prev_indx<-2
@@ -243,7 +249,7 @@ get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
       all_bin_residuals[[counter]]<-bin_residuals
     }
   }
-  cat("\n")
+  # cat("\n")
   colnames(all_posterior_lookup)<-c("current_error_bin","cluster_row",
                                     "current_error_lower","current_error_upper",
                                     "previous_error_center","simflow_center",
@@ -268,8 +274,75 @@ get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
               simflow_norm_dat=simflow_norm_dat))
 }
 
+#' Predict k-means cluster for a new point based on smallest Euclidean distance to cluster centroids
+#'
+#' @param new_data data.frame; first column: new error at t-1, second column: new streamflow at t
+#' @param kmeans_model output from kmeans function, should be given from get_CDNP_clusters function
+#'
+#' @return predicted cluster numbers that the new data belongs to
+#' @export
+#'
+#' @examples
+#' library(CDNP)
+#' # first run get_CDNP_clusters function
+#' CDNP_clusters_out<-get_CDNP_clusters(nclusters=10,
+#'                                      nbin=8,
+#'                                      ts_data_resid=eg_data$resid,
+#'                                      ts_data_simflow=eg_data$sim)
+#'
+#' kmeans_model<-CDNP_clusters_out$kmeans_model
+#' kmeans_model$centers
+#' # by default the data is normalised.
+#' new_data<-data.frame(ts_data_resid_tminus1=0.7,ts_data_simflow=0.11)
+#'
+#' predict_kmeans_out<-predict_kmeans(new_data,kmeans_model)
+#' # predicted cluster should be close to (0.7,0.11)
+#' kmeans_model$centers[predict_kmeans_out,]
+#'
+predict_kmeans <- function(new_data, kmeans_model) {
+  centers <- kmeans_model$centers
+  n_new_data <- nrow(new_data)
+  n_clusters <- nrow(centers)
+
+  # Initialize a vector to store predicted cluster assignments
+  predicted_clusters <- numeric(n_new_data)
+
+  for (j in 1:n_new_data) {
+    distances <- apply(centers, 1, function(x) {
+      dist(rbind(new_data[j, ], x))
+    })
+    predicted_clusters[j] <- which.min(distances)
+  }
+  return(predicted_clusters)
+}
 
 
+#' Simulate a daily time series of errors based on CDNP lookup table
+#'
+#' @param get_CDNP_posterior_lookup_output output from get_CDNP_posterior_lookup function
+#' @param simflow vector; streamflow
+#' @param initial_resid numeric; initial residual error value (default=0)
+#' @param seed numeric; optional seed
+#' @param sampling_method sampling_method=1 assumes uniform distribution within bin (with truncation to avoid negative flows),
+#' sampling_method=2 (default) resamples from bin_residuals (excluding those that cause negative flows)
+#'
+#' @return vector; predicted errors the same length as simflow
+#' @export
+#'
+#' @examples
+#' library(CDNP)
+#' # first run get_CDNP_clusters function
+#' CDNP_clusters_out<-get_CDNP_clusters(nclusters=10,
+#'                                      nbin=8,
+#'                                      ts_data_resid=eg_data$resid,
+#'                                      ts_data_simflow=eg_data$sim)
+#' # get CNDP lookup
+#' CDNP_posterior_lookup<-get_CDNP_posterior_lookup(CDNP_clusters_out)
+#'
+#' # perform error simulation
+#' CDNP_sim_out<-CDNP_sim(CDNP_posterior_lookup,eg_data$sim,seed=42)
+#' plot(eg_data$resid,type="l") # original residual
+#' lines(CDNP_sim_out,col=2,lty=2) # a new simulated residual
 CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed=NA,sampling_method=2){
   # simflow<-orig_simflow
   # initial_resid<-0
@@ -291,14 +364,19 @@ CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed
     cur_simflow<-simflow[dd]
     # find the cluster condition
     if(normalise_data){
-      new_data<-data.frame(ts_data_resid_tminus1=normalise(prev_error,
-                                                           min_vals = prevresid_norm_dat$min_vals,
-                                                           max_vals = prevresid_norm_dat$max_vals)$normalised_data,
-                           ts_data_simflow=normalise(cur_simflow,
-                                                     min_vals = simflow_norm_dat$min_vals,
-                                                     max_vals = simflow_norm_dat$max_vals)$normalised_data)
+      # removed data.frame to speed up processing
+      # new_data<-data.frame(ts_data_resid_tminus1=normalise(prev_error,
+      #                                                      min_vals = prevresid_norm_dat$min_vals,
+      #                                                      max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+      #                      ts_data_simflow=normalise(cur_simflow,
+      #                                                min_vals = simflow_norm_dat$min_vals,
+      #                                                max_vals = simflow_norm_dat$max_vals)$normalised_data)
+      new_data<-matrix(c(normalise(prev_error,min_vals = prevresid_norm_dat$min_vals,max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+                         normalise(cur_simflow,min_vals = simflow_norm_dat$min_vals,max_vals = simflow_norm_dat$max_vals)$normalised_data),ncol=2)
     } else {
-      new_data<-data.frame(ts_data_resid_tminus1=prev_error,ts_data_simflow=cur_simflow)
+      # removed data.frame to speed up processing
+      # new_data<-data.frame(ts_data_resid_tminus1=prev_error,ts_data_simflow=cur_simflow)
+      new_data<-matrix(c(prev_error,cur_simflow),ncol=2)
     }
 
     predicted_cluster<-predict_kmeans(new_data,kmeans_model)
@@ -335,4 +413,116 @@ CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed
   }
   return(resid_sim)
 }
+
+check_data_ok<-function(obs_or_resid,warmup=1095){
+  obs_or_resid_nowarm<-obs_or_resid[-(1:(warmup))]
+
+  split_index<-ceiling(length(obs_or_resid_nowarm)/2)
+
+  obs_or_resid_spl1<-obs_or_resid_nowarm[1:split_index]
+  obs_or_resid_spl2<-obs_or_resid_nowarm[(split_index+1):length(obs_or_resid_nowarm)]
+  data_ok<-any(!is.na(obs_or_resid_spl1)) & any(!is.na(obs_or_resid_spl2))
+  return(data_ok)
+}
+
+#' Uses Differential Evolution optimiser (DEoptim) to determine the number of clusters and bins that give the most reliable results
+#'
+#' @description
+#' This splits the input series into two halves. The first half is used to compute the clusters
+#' and lookup tables. These are used to simulate residuals for the second half and these are
+#' checked against the actual residuals of the second using the  reliability metric (alpha) from
+#' Renard et al. (2010).
+#'
+#' @param resid vector; residual series
+#' @param simflow vector; streamflow series
+#' @param warmup integer; length of data that will be exluded at the beginning of each split period (default=1095)
+#' @param nrep integer; number of residual simulation replicates (default=10)
+#' @param itermax integer; maximum number of iterations for DEoptim (default=50)
+#' @param lower vector of integers; lower bounds for ncluster and nbin (default=c(2,2))
+#' @param upper vector of integers; upper bounds for ncluster and nbin (default=c(100,100))
+#'
+#' @return DEoptim object; optimal ncluster and nbin are in $optim$bestmem
+#' @export
+#'
+#' @references Renard, B., Kavetski, D., Kuczera, G., Thyer, M., & Franks, S. W. (2010). Understanding predictive uncertainty in hydrologic modeling: The challenge of identifying input and structural errors. Water Resources Research, 46(5).
+#'
+#' @examples
+#' library(CDNP)
+#' optimal_ncluster_and_nbins_out<-get_optimal_ncluster_and_nbins(resid=eg_data$resid,
+#'                                      simflow=eg_data$sim,warmup=30,nrep=2,itermax=3)
+#' # Best member (ncluster and nbin)
+#' optimal_ncluster_and_nbins_out$optim$bestmem
+#'
+get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,itermax=50,
+                                         lower=c(2,2),upper=c(100,100)){
+  if(length(resid)!=length(simflow)) stop("length of residual is different to length of streamflow")
+  if(warmup>length(simflow)) stop("warmup is longer than the length of time series")
+  if(!check_data_ok(resid)) stop("not enough data to split the time series")
+  resid_nowarm<-resid[-(1:(warmup))]
+  simflow_nowarm<-simflow[-(1:(warmup))]
+
+  split_index<-ceiling(length(resid_nowarm)/2)
+
+  resid_nowarm_spl1<-resid_nowarm[1:split_index]
+  resid_nowarm_spl2<-resid_nowarm[(split_index+1):length(resid_nowarm)]
+
+  simflow_nowarm_spl1<-simflow_nowarm[1:split_index]
+  simflow_nowarm_spl2<-simflow_nowarm[(split_index+1):length(simflow_nowarm)]
+
+  simflow_withwarm_spl1<-simflow[1:(split_index+warmup)]
+  head(simflow_withwarm_spl1[-(1:warmup)])
+  head(simflow_nowarm_spl1)
+  tail(simflow_withwarm_spl1[-(1:warmup)])
+  tail(simflow_nowarm_spl1)
+
+  simflow_withwarm_spl2<-simflow_nowarm[((split_index+1)-warmup):length(simflow_nowarm)]
+  length(((split_index+1)-warmup):(split_index))
+  head(simflow_withwarm_spl2[-(1:warmup)])
+  head(simflow_nowarm_spl2)
+  tail(simflow_withwarm_spl2[-(1:warmup)])
+  tail(simflow_nowarm_spl2)
+
+  compute_alpha_for_optim<-function(par,nrep=nrep){
+    ncluster<-ceiling(par[1])
+    nbin<-ceiling(par[2])
+
+    cluster_out_spl<-get_CDNP_clusters(ncluster=ncluster,nbin=nbin,ts_data_resid=resid_nowarm_spl1,
+                                       ts_data_simflow=simflow_nowarm_spl1,use_quantile_spacing=T,seed=45)
+    all_posterior_lookup_spl<-get_CDNP_posterior_lookup(cluster_out_spl)
+
+    all_CDNP_sim_out<-matrix(NA,nrow=length(simflow_withwarm_spl2)-warmup,ncol=nrep)
+    for(rrr in 1:nrep){
+      CDNP_sim_out<-CDNP_sim(all_posterior_lookup_spl,simflow_withwarm_spl2,seed=rrr)
+      # lines(CDNP_sim_out,col=2,lty=2)
+      CDNP_sim_out_nowarm<-CDNP_sim_out[-(1:warmup)]
+      all_CDNP_sim_out[,rrr]<-CDNP_sim_out_nowarm
+    }
+
+    # compute_alpha_reliability(all_CDNP_sim_out,orig_resid_nowarm_spl1)
+    alpha<-compute_alpha_reliability(all_CDNP_sim_out,resid_nowarm_spl2)
+    cat("Sampled pars:",par,"Alpha:",alpha,"\n")
+    return(-alpha)
+  }
+
+  # opt<-optim(par<-as.integer(c(10,10)),compute_alpha_for_optim,method="SANN",control=list(fnscale=-1,trace=1))
+  # opt<-optim(par<-as.integer(c(10,10)),compute_alpha_for_optim,control=list(fnscale=-1,trace=1))
+
+  # library(DEoptim)
+  # Mapping function to ensure integers
+  map_fun <- function(x) {
+    return(ceiling(x))
+  }
+  deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
+                 fnMap = map_fun,control=list(trace=1,itermax=itermax),nrep=nrep)
+
+  # all_pars<-as.matrix(expand.grid(10:30,10:30))
+  # all_alpha<-rep(NA,nrow(all_pars))
+  # for(pp in 1:nrow(all_pars)){
+  #   cat(pp,"/",nrow(all_pars),"\n")
+  #   pars<-all_pars[pp,]
+  #   all_alpha[pp]<-compute_alpha_for_optim(pars)
+  # }
+  return(deopt)
+}
+
 

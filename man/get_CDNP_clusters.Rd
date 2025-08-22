@@ -10,7 +10,8 @@ get_CDNP_clusters(
   ts_data_resid,
   ts_data_simflow,
   use_quantile_spacing = T,
-  normalise_data = T
+  normalise_data = T,
+  seed = NA
 )
 }
 \arguments{
