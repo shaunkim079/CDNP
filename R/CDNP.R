@@ -54,7 +54,7 @@ normalise<-function(vals,min_vals=NA,max_vals=NA){
 #'                                      ts_data_resid=eg_data$resid,
 #'                                      ts_data_simflow=eg_data$sim)
 #' CDNP_clusters_out
-get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_quantile_spacing=T,normalise_data=T,seed=NA){
+get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_quantile_spacing=T,normalise_data=T,seed=NA,bootstrap=F){
   # nclusters<-10
   # ts_data<-orig_resid
   # ts_data_resid<-orig_resid
@@ -66,6 +66,15 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
   all_dat<-as.data.frame(all_dat)
   to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]))
   if(length(to_remove)>0) all_dat<-all_dat[-to_remove,]
+
+  # resample
+  if(bootstrap){
+    bootstrap_indices<-sample.int(n=nrow(all_dat),size=nrow(all_dat),replace = T)
+    all_dat<-all_dat[bootstrap_indices,]
+  } else {
+    bootstrap_indices<-NA
+  }
+
 
   if(normalise_data){
     col.names<-names(all_dat)
@@ -124,7 +133,8 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
               orig_simflow=ts_data_simflow,
               normalise_data=normalise_data,
               prevresid_norm_dat=prevresid_norm_dat,
-              simflow_norm_dat=simflow_norm_dat))
+              simflow_norm_dat=simflow_norm_dat,
+              bootstrap_indices=bootstrap_indices))
 }
 
 
@@ -159,12 +169,17 @@ get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
   normalise_data<-get_CDNP_clusters_output$normalise_data
   prevresid_norm_dat<-get_CDNP_clusters_output$prevresid_norm_dat
   simflow_norm_dat<-get_CDNP_clusters_output$simflow_norm_dat
+  bootstrap_indices<-get_CDNP_clusters_output$bootstrap_indices
 
   ts_data_resid_tminus1<-c(NA,orig_resid[-length(orig_resid)])
   all_dat<-cbind(ts_data_resid_tminus1,orig_simflow,orig_resid)
   all_dat<-as.data.frame(all_dat)
   to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]))
   if(length(to_remove)>0) all_dat<-all_dat[-to_remove,]
+
+  if(!is.na(bootstrap_indices[1])){
+    all_dat<-all_dat[bootstrap_indices,]
+  }
 
   if(normalise_data){
     col.names<-names(all_dat)
