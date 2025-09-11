@@ -34,17 +34,20 @@ normalise<-function(vals,min_vals=NA,max_vals=NA){
 #' @param nbin number of bins for the error residual. Equal to the number of intervals minus 1.
 #' @param ts_data_resid vector of residual errors. Should be the same length as ts_data_simflow.
 #' @param ts_data_simflow vector of streamflow. Should be the same length as ts_data_resid.
-#' @param use_quantile_spacing logical; if true uses quantiles to determine the error intervals. If false, uses equal size spacing of intervals.
-#' @param normalise_data logical; if true uses min-max normalisation for residual (at t-1) and streamflow.
+#' @param use_quantile_spacing logical; if true uses quantiles to determine the error intervals. If false, uses equal size spacing of intervals (default=TRUE).
+#' @param normalise_data logical; if true uses min-max normalisation for residual (at t-1) and streamflow (default=TRUE).
+#' @param seed numeric; optional seed that can be set if not NA (default).
+#' @param bootstrap logical; if true performs a bootstrap of the input data (default=FALSE).
 #'
 #' @return returns a list of objects which is used by get_CDNP_posterior_lookup:\cr\cr
 #' \verb{    }resid_intervals: vector of error residual intervals\cr\cr
 #' \verb{    }kmeans_model: k-mean model object\cr\cr
 #' \verb{    }orig_resid: vector; error residual (same as input)\cr\cr
 #' \verb{    }orig_simflow: vector; streamflow (same as input)\cr\cr
-#' \verb{    }normalise_data: logical; if true uses min-max normalisation for residual (at t-1) and streamflow (same as input).\cr\cr
+#' \verb{    }normalise_data: logical; if true uses min-max normalisation for residual (at t-1) and streamflow (same as input)\cr\cr
 #' \verb{    }prevresid_norm_dat: list; results from normalisation of residual (at t-1)\cr\cr
-#' \verb{    }simflow_norm_dat: list; results from normalisation of streamflow
+#' \verb{    }simflow_norm_dat: list; results from normalisation of streamflow\cr\cr
+#' \verb{    }bootstrap_indices: vector; resample indices from bootstrapping
 #' @export
 #'
 #' @examples
@@ -60,6 +63,8 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
   # ts_data_resid<-orig_resid
   # ts_data_simflow<-orig_simflow
   # use_quantile_spacing=T
+
+  if(!is.na(seed)) set.seed(seed)
 
   ts_data_resid_tminus1<-c(NA,ts_data_resid[-length(ts_data_resid)])
   all_dat<-cbind(ts_data_resid_tminus1,ts_data_simflow,ts_data_resid)
@@ -94,7 +99,7 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
   if(num_unique_points<nclusters){
     cat("Number of unique data points is less than specified nclusters. Will continue with",num_unique_points,"clusters\n")
   }
-  if(!is.na(seed)) set.seed(seed)
+
   km<-kmeans(all_dat[,1:2],min(num_unique_points,nclusters),nstart = 10,iter.max = 100)
   # km$cluster
   # km$centers
@@ -326,7 +331,7 @@ predict_kmeans <- function(new_data, kmeans_model) {
     distances <- apply(centers, 1, function(x) {
       dist(rbind(new_data[j, ], x))
     })
-    predicted_clusters[j] <- which.min(distances)
+    predicted_clusters[j] <- which.min(distances) # index of the FIRST minimum
   }
   return(predicted_clusters)
 }
@@ -412,7 +417,7 @@ CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed
       min_bound<-min(posterior_lookup$current_error_lower[sampled_lookup_row_index],cur_simflow)
       max_bound<-min(posterior_lookup$current_error_upper[sampled_lookup_row_index],cur_simflow)
       error_sample<-runif(1,min_bound,max_bound)
-    } else {
+    } else if(sampling_method==2){
       # resamples from the bin
       # ensure no negative flows
       bin_to_sample<-bin_residuals[[sampled_lookup_row_index]]
@@ -421,6 +426,13 @@ CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed
         bin_to_sample<-c(bin_to_sample,cur_simflow)
       }
       error_sample<-sample(bin_to_sample,1)
+    } else if(sampling_method==3){
+      # middle value
+      min_bound<-min(posterior_lookup$current_error_lower[sampled_lookup_row_index],cur_simflow)
+      max_bound<-min(posterior_lookup$current_error_upper[sampled_lookup_row_index],cur_simflow)
+      error_sample<-mean(c(min_bound,max_bound))
+    } else {
+      stop("Not legitimate sampling_method")
     }
 
     resid_sim[dd]<-error_sample
