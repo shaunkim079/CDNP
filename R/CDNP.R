@@ -344,7 +344,7 @@ predict_kmeans <- function(new_data, kmeans_model) {
 #' @param initial_resid numeric; initial residual error value (default=0)
 #' @param seed numeric; optional seed
 #' @param sampling_method sampling_method=1 assumes uniform distribution within bin (with truncation to avoid negative flows),
-#' sampling_method=2 (default) resamples from bin_residuals (excluding those that cause negative flows)
+#' sampling_method=2 (default) resamples from bin_residuals (excluding those that cause negative flows), sampling_method=3 picks mid value of bin (avoids negatives)
 #'
 #' @return vector; predicted errors the same length as simflow
 #' @export
