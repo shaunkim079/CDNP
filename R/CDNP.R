@@ -431,6 +431,14 @@ CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed
       min_bound<-min(posterior_lookup$current_error_lower[sampled_lookup_row_index],cur_simflow)
       max_bound<-min(posterior_lookup$current_error_upper[sampled_lookup_row_index],cur_simflow)
       error_sample<-mean(c(min_bound,max_bound))
+    } else if(sampling_method==4){
+      # median
+      bin_to_sample<-bin_residuals[[sampled_lookup_row_index]]
+      error_sample<-min(median(bin_to_sample),cur_simflow)
+    } else if(sampling_method==5){
+      # mean
+      bin_to_sample<-bin_residuals[[sampled_lookup_row_index]]
+      error_sample<-min(mean(bin_to_sample),cur_simflow)
     } else {
       stop("Not legitimate sampling_method")
     }
