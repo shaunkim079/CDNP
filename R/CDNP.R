@@ -31,7 +31,7 @@ normalise<-function(vals,min_vals=NA,max_vals=NA){
 #' Get the k-means clusters based on error and streamflow data
 #'
 #' @param nclusters number of clusters to use
-#' @param nbin number of bins for the error residual. Equal to the number of intervals minus 1.
+#' @param nbin number of bins for the error residual. Determines the intervals if not NA (default). Equal to the number of intervals minus 1.
 #' @param ts_data_resid vector of residual errors. Should be the same length as ts_data_simflow.
 #' @param ts_data_simflow vector of streamflow. Should be the same length as ts_data_resid.
 #' @param use_quantile_spacing logical; if true uses quantiles to determine the error intervals. If false, uses equal size spacing of intervals (default=TRUE).
@@ -57,7 +57,142 @@ normalise<-function(vals,min_vals=NA,max_vals=NA){
 #'                                      ts_data_resid=eg_data$resid,
 #'                                      ts_data_simflow=eg_data$sim)
 #' CDNP_clusters_out
-get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_quantile_spacing=T,normalise_data=T,seed=NA,bootstrap=F){
+get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_data_USresid=NA,use_quantile_spacing=T,normalise_data=T,seed=NA,bootstrap=F){
+
+  # nclusters=10
+  # ts_data_resid=eg_data$resid
+  # ts_data_simflow=eg_data$sim
+  # ts_data_USresid=eg_data$resid+rnorm(length(eg_data$resid))
+  # use_quantile_spacing=T
+  # normalise_data=T
+  # seed=NA
+  # bootstrap=F
+
+  if(!is.na(seed)) set.seed(seed)
+
+  ts_data_resid_tminus1<-c(NA,ts_data_resid[-length(ts_data_resid)])
+  if(length(ts_data_USresid)==length(ts_data_simflow)){
+    all_dat<-cbind(ts_data_resid_tminus1,ts_data_simflow,ts_data_USresid,ts_data_resid)
+    all_dat<-as.data.frame(all_dat)
+    to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]) | is.na(all_dat[,4]))
+  } else {
+    all_dat<-cbind(ts_data_resid_tminus1,ts_data_simflow,ts_data_resid)
+    all_dat<-as.data.frame(all_dat)
+    to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]))
+  }
+
+  if(length(to_remove)>0) all_dat<-all_dat[-to_remove,]
+
+  # resample
+  if(bootstrap){
+    bootstrap_indices<-sample.int(n=nrow(all_dat),size=nrow(all_dat),replace = T)
+    all_dat<-all_dat[bootstrap_indices,]
+  } else {
+    bootstrap_indices<-NA
+  }
+
+
+  if(normalise_data){
+    if(length(ts_data_USresid)==length(ts_data_simflow)){
+      col.names<-names(all_dat)
+      # only for prev resid, current simflow, US resid
+      prevresid_norm_dat<-normalise(all_dat[,1])
+      simflow_norm_dat<-normalise(all_dat[,2])
+      USresid_norm_dat<-normalise(all_dat[,3])
+      all_dat<-cbind(prevresid_norm_dat$normalised_data,
+                     simflow_norm_dat$normalised_data,
+                     USresid_norm_dat$normalised_data,
+                     all_dat[,4])
+      colnames(all_dat)<-col.names
+      all_dat<-as.data.frame(all_dat)
+    } else {
+      USresid_norm_dat<-NA
+      col.names<-names(all_dat)
+      # only for prev resid and current simflow
+      prevresid_norm_dat<-normalise(all_dat[,1])
+      simflow_norm_dat<-normalise(all_dat[,2])
+      all_dat<-cbind(prevresid_norm_dat$normalised_data,
+                     simflow_norm_dat$normalised_data,
+                     all_dat[,3])
+      colnames(all_dat)<-col.names
+      all_dat<-as.data.frame(all_dat)
+    }
+
+
+  } else {
+    prevresid_norm_dat<-NA
+    simflow_norm_dat<-NA
+    USresid_norm_dat<-NA
+  }
+
+  if(length(ts_data_USresid)==length(ts_data_simflow)){
+    num_unique_points<-length(unique(paste0(all_dat[,1],"_",all_dat[,2],"_",all_dat[,3])))
+    if(num_unique_points<nclusters){
+      cat("Number of unique data points is less than specified nclusters. Will continue with",num_unique_points,"clusters\n")
+    }
+  } else {
+    num_unique_points<-length(unique(paste0(all_dat[,1],"_",all_dat[,2])))
+    if(num_unique_points<nclusters){
+      cat("Number of unique data points is less than specified nclusters. Will continue with",num_unique_points,"clusters\n")
+    }
+  }
+
+  if(length(ts_data_USresid)==length(ts_data_simflow)){
+    km<-kmeans(all_dat[,1:3],min(num_unique_points,nclusters),nstart = 10,iter.max = 100)
+  } else {
+    km<-kmeans(all_dat[,1:2],min(num_unique_points,nclusters),nstart = 10,iter.max = 100)
+  }
+
+  # km$cluster
+  # km$centers
+  # plot(y=all_dat[,2],x=all_dat[,1],log="")
+  # points(km$centers, col = 2, pch = 8, cex = 2)
+
+  if(!is.na(nbin)){
+    # residual intervals (small buffer for this at top end)
+    if(!use_quantile_spacing){
+      ts_intervals_curresid<-seq(min(all_dat$ts_data_resid),max(all_dat$ts_data_resid)+1,length.out=nbin+1)
+    } else {
+      ts_intervals_curresid<-quantile(all_dat$ts_data_resid,probs = seq(0,1,length.out=nbin+1))
+      if(length(unique(ts_intervals_curresid))<length(ts_intervals_curresid)){
+        cat("Number of error bins changed from",nbin,"to",length(unique(ts_intervals_curresid))-1,"to avoid repeat intervals\n")
+        ts_intervals_curresid<-unique(ts_intervals_curresid)
+      }
+      ts_intervals_curresid[length(ts_intervals_curresid)]<-ts_intervals_curresid[length(ts_intervals_curresid)]+1
+    }
+
+    # perform check to see if there is data inside each interval
+    num_data_points_within_each_bin<-numeric(length(ts_intervals_curresid)-1)
+    for(interv in 1:(length(ts_intervals_curresid)-1)){
+      indices_within_bin<-which(all_dat$ts_data_resid>=ts_intervals_curresid[interv] & all_dat$ts_data_resid<ts_intervals_curresid[interv+1])
+      num_data_points_within_each_bin[interv]<-length(indices_within_bin)
+    }
+    if(any(num_data_points_within_each_bin==0)){
+      to_remove<-which(num_data_points_within_each_bin==0)
+      ts_intervals_curresid<-ts_intervals_curresid[-to_remove]
+      num_data_points_within_each_bin<-num_data_points_within_each_bin[-to_remove]
+      cat("Number of error bins changed to",length(ts_intervals_curresid)-1,"to avoid empty bins\n")
+    }
+  } else {
+    ts_intervals_curresid<-NA
+  }
+
+
+
+  return(list(resid_intervals=ts_intervals_curresid,
+              kmeans_model=km,
+              orig_resid=ts_data_resid,
+              orig_simflow=ts_data_simflow,
+              orig_USresid=ts_data_USresid,
+              normalise_data=normalise_data,
+              prevresid_norm_dat=prevresid_norm_dat,
+              simflow_norm_dat=simflow_norm_dat,
+              USresid_norm_dat=USresid_norm_dat,
+              bootstrap_indices=bootstrap_indices,
+              all_dat=all_dat))
+}
+
+get_CDNP_clusters_archive<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,use_quantile_spacing=T,normalise_data=T,seed=NA,bootstrap=F){
   # nclusters<-10
   # ts_data<-orig_resid
   # ts_data_resid<-orig_resid
@@ -106,30 +241,35 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
   # plot(y=all_dat[,2],x=all_dat[,1],log="")
   # points(km$centers, col = 2, pch = 8, cex = 2)
 
-  # residual intervals (small buffer for this at top end)
-  if(!use_quantile_spacing){
-    ts_intervals_curresid<-seq(min(all_dat$ts_data_resid),max(all_dat$ts_data_resid)+1,length.out=nbin+1)
-  } else {
-    ts_intervals_curresid<-quantile(all_dat$ts_data_resid,probs = seq(0,1,length.out=nbin+1))
-    if(length(unique(ts_intervals_curresid))<length(ts_intervals_curresid)){
-      cat("Number of error bins changed from",nbin,"to",length(unique(ts_intervals_curresid))-1,"to avoid repeat intervals\n")
-      ts_intervals_curresid<-unique(ts_intervals_curresid)
+  if(!is.na(nbin)){
+    # residual intervals (small buffer for this at top end)
+    if(!use_quantile_spacing){
+      ts_intervals_curresid<-seq(min(all_dat$ts_data_resid),max(all_dat$ts_data_resid)+1,length.out=nbin+1)
+    } else {
+      ts_intervals_curresid<-quantile(all_dat$ts_data_resid,probs = seq(0,1,length.out=nbin+1))
+      if(length(unique(ts_intervals_curresid))<length(ts_intervals_curresid)){
+        cat("Number of error bins changed from",nbin,"to",length(unique(ts_intervals_curresid))-1,"to avoid repeat intervals\n")
+        ts_intervals_curresid<-unique(ts_intervals_curresid)
+      }
+      ts_intervals_curresid[length(ts_intervals_curresid)]<-ts_intervals_curresid[length(ts_intervals_curresid)]+1
     }
-    ts_intervals_curresid[length(ts_intervals_curresid)]<-ts_intervals_curresid[length(ts_intervals_curresid)]+1
+
+    # perform check to see if there is data inside each interval
+    num_data_points_within_each_bin<-numeric(length(ts_intervals_curresid)-1)
+    for(interv in 1:(length(ts_intervals_curresid)-1)){
+      indices_within_bin<-which(all_dat$ts_data_resid>=ts_intervals_curresid[interv] & all_dat$ts_data_resid<ts_intervals_curresid[interv+1])
+      num_data_points_within_each_bin[interv]<-length(indices_within_bin)
+    }
+    if(any(num_data_points_within_each_bin==0)){
+      to_remove<-which(num_data_points_within_each_bin==0)
+      ts_intervals_curresid<-ts_intervals_curresid[-to_remove]
+      num_data_points_within_each_bin<-num_data_points_within_each_bin[-to_remove]
+      cat("Number of error bins changed to",length(ts_intervals_curresid)-1,"to avoid empty bins\n")
+    }
+  } else {
+    ts_intervals_curresid<-NA
   }
 
-  # perform check to see if there is data inside each interval
-  num_data_points_within_each_bin<-numeric(length(ts_intervals_curresid)-1)
-  for(interv in 1:(length(ts_intervals_curresid)-1)){
-    indices_within_bin<-which(all_dat$ts_data_resid>=ts_intervals_curresid[interv] & all_dat$ts_data_resid<ts_intervals_curresid[interv+1])
-    num_data_points_within_each_bin[interv]<-length(indices_within_bin)
-  }
-  if(any(num_data_points_within_each_bin==0)){
-    to_remove<-which(num_data_points_within_each_bin==0)
-    ts_intervals_curresid<-ts_intervals_curresid[-to_remove]
-    num_data_points_within_each_bin<-num_data_points_within_each_bin[-to_remove]
-    cat("Number of error bins changed to",length(ts_intervals_curresid)-1,"to avoid empty bins\n")
-  }
 
 
   return(list(resid_intervals=ts_intervals_curresid,
@@ -139,10 +279,245 @@ get_CDNP_clusters<-function(nclusters,nbin,ts_data_resid,ts_data_simflow,use_qua
               normalise_data=normalise_data,
               prevresid_norm_dat=prevresid_norm_dat,
               simflow_norm_dat=simflow_norm_dat,
-              bootstrap_indices=bootstrap_indices))
+              bootstrap_indices=bootstrap_indices,
+              all_dat=all_dat))
 }
 
+# get_CDNP_clusters_output<-get_CDNP_clusters(nclusters=10,
+#                                      nbin=NA,
+#                                      ts_data_resid=eg_data$resid,
+#                                      ts_data_simflow=eg_data$sim)
 
+CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_resid=0,seed=NA,recompute_all_dat=F,prevent_neg_flow_after_sample=T,...){
+  # simflow<-orig_simflow
+  # initial_resid<-0
+  if(exists("prevent_zeroflow_after_sample")){
+    prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
+  }
+
+  orig_simflow<-get_CDNP_clusters_output$orig_simflow
+  orig_resid<-get_CDNP_clusters_output$orig_resid
+  orig_USresid<-get_CDNP_clusters_output$orig_USresid
+  resid_intervals<-get_CDNP_clusters_output$resid_intervals
+  kmeans_model<-get_CDNP_clusters_output$kmeans_model
+  normalise_data<-get_CDNP_clusters_output$normalise_data
+  prevresid_norm_dat<-get_CDNP_clusters_output$prevresid_norm_dat
+  simflow_norm_dat<-get_CDNP_clusters_output$simflow_norm_dat
+  USresid_norm_dat<-get_CDNP_clusters_output$USresid_norm_dat
+  bootstrap_indices<-get_CDNP_clusters_output$bootstrap_indices
+
+  if(recompute_all_dat){
+    ts_data_resid_tminus1<-c(NA,orig_resid[-length(orig_resid)])
+    if(!all(is.na(orig_USresid))){
+      all_dat<-cbind(ts_data_resid_tminus1,orig_simflow,orig_USresid,orig_resid)
+      all_dat<-as.data.frame(all_dat)
+      to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]) | is.na(all_dat[,4]))
+    } else {
+      all_dat<-cbind(ts_data_resid_tminus1,orig_simflow,orig_resid)
+      all_dat<-as.data.frame(all_dat)
+      to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]))
+    }
+
+    if(length(to_remove)>0) all_dat<-all_dat[-to_remove,]
+
+    if(!is.na(bootstrap_indices[1])){
+      all_dat<-all_dat[bootstrap_indices,]
+    }
+
+    if(normalise_data){
+      col.names<-names(all_dat)
+      if(!all(is.na(orig_USresid))){
+        # only for prev resid, current simflow, US resid
+        prevresid_norm_dat<-normalise(all_dat[,1])
+        simflow_norm_dat<-normalise(all_dat[,2])
+        USresid_norm_dat<-normalise(all_dat[,3])
+        all_dat<-cbind(prevresid_norm_dat$normalised_data,
+                       simflow_norm_dat$normalised_data,
+                       USresid_norm_dat$normalised_data,
+                       all_dat[,4])
+      } else {
+        # only for prev resid and current simflow
+        prevresid_norm_dat<-normalise(all_dat[,1])
+        simflow_norm_dat<-normalise(all_dat[,2])
+        all_dat<-cbind(prevresid_norm_dat$normalised_data,
+                       simflow_norm_dat$normalised_data,
+                       all_dat[,3])
+      }
+
+      colnames(all_dat)<-col.names
+      all_dat<-as.data.frame(all_dat)
+    }
+  } else {
+    all_dat<-get_CDNP_clusters_output$all_dat
+  }
+
+
+  if(!is.na(seed)) set.seed(seed)
+  resid_sim<-rep(NA,length(simflow))
+  prev_error<-initial_resid
+  for(dd in 1:length(simflow)){
+    # if(dd==40) browser()
+    if(dd>1){
+      prev_error<-resid_sim[dd-1]
+    }
+    cur_simflow<-simflow[dd]
+    if(!all(is.na(orig_USresid))){
+      cur_USerror<-USresid[dd]
+    }
+    # find the cluster condition
+    if(normalise_data){
+      # removed data.frame to speed up processing
+      # new_data<-data.frame(ts_data_resid_tminus1=normalise(prev_error,
+      #                                                      min_vals = prevresid_norm_dat$min_vals,
+      #                                                      max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+      #                      ts_data_simflow=normalise(cur_simflow,
+      #                                                min_vals = simflow_norm_dat$min_vals,
+      #                                                max_vals = simflow_norm_dat$max_vals)$normalised_data)
+      if(!all(is.na(orig_USresid))){
+        new_data<-matrix(c(normalise(prev_error,min_vals = prevresid_norm_dat$min_vals,max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+                           normalise(cur_simflow,min_vals = simflow_norm_dat$min_vals,max_vals = simflow_norm_dat$max_vals)$normalised_data,
+                           normalise(cur_USerror,min_vals = USresid_norm_dat$min_vals,max_vals = USresid_norm_dat$max_vals)$normalised_data),ncol=3)
+      } else {
+        new_data<-matrix(c(normalise(prev_error,min_vals = prevresid_norm_dat$min_vals,max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+                           normalise(cur_simflow,min_vals = simflow_norm_dat$min_vals,max_vals = simflow_norm_dat$max_vals)$normalised_data),ncol=2)
+      }
+
+    } else {
+      # removed data.frame to speed up processing
+      # new_data<-data.frame(ts_data_resid_tminus1=prev_error,ts_data_simflow=cur_simflow)
+      if(!all(is.na(orig_USresid))){
+        new_data<-matrix(c(prev_error,cur_simflow,cur_USerror),ncol=3)
+      } else {
+        new_data<-matrix(c(prev_error,cur_simflow),ncol=2)
+      }
+    }
+
+    predicted_cluster<-predict_kmeans(new_data,kmeans_model)
+
+    cluster_indices<-which(kmeans_model$cluster==predicted_cluster)
+    if(length(cluster_indices)==0) stop("Couldn't find the cluster condition - perhaps rerun get_CDNP_clusters again")
+    if(!all(is.na(orig_USresid))){
+      errors_to_sample<-all_dat[cluster_indices,4]
+    } else {
+      errors_to_sample<-all_dat[cluster_indices,3]
+    }
+
+    if(!prevent_neg_flow_after_sample){
+      if(any(errors_to_sample>cur_simflow)){
+        errors_to_sample<-errors_to_sample[-which(errors_to_sample>cur_simflow)]
+        errors_to_sample<-c(errors_to_sample,cur_simflow)
+      }
+    }
+
+    error_sample<-sample(x=errors_to_sample,size=1)
+
+    if(prevent_neg_flow_after_sample){
+      if(error_sample>cur_simflow){
+        error_sample<-cur_simflow
+      }
+    }
+
+    resid_sim[dd]<-error_sample
+    # if(error_sample < (-20)) browser()
+  }
+  return(resid_sim)
+}
+
+# CDNP_clusters_sim(get_CDNP_clusters_output,simflow=runif(15,0,3),initial_resid=0,seed=1,recompute_all_dat=F)
+CDNP_clusters_sim_archive<-function(get_CDNP_clusters_output,simflow,initial_resid=0,seed=NA,recompute_all_dat=F,prevent_neg_flow_after_sample=F,...){
+  # simflow<-orig_simflow
+  # initial_resid<-0
+  if(exists("prevent_zeroflow_after_sample")){
+    prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
+  }
+
+  orig_simflow<-get_CDNP_clusters_output$orig_simflow
+  orig_resid<-get_CDNP_clusters_output$orig_resid
+  resid_intervals<-get_CDNP_clusters_output$resid_intervals
+  kmeans_model<-get_CDNP_clusters_output$kmeans_model
+  normalise_data<-get_CDNP_clusters_output$normalise_data
+  prevresid_norm_dat<-get_CDNP_clusters_output$prevresid_norm_dat
+  simflow_norm_dat<-get_CDNP_clusters_output$simflow_norm_dat
+  bootstrap_indices<-get_CDNP_clusters_output$bootstrap_indices
+
+  if(recompute_all_dat){
+    ts_data_resid_tminus1<-c(NA,orig_resid[-length(orig_resid)])
+    all_dat<-cbind(ts_data_resid_tminus1,orig_simflow,orig_resid)
+    all_dat<-as.data.frame(all_dat)
+    to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]))
+    if(length(to_remove)>0) all_dat<-all_dat[-to_remove,]
+
+    if(!is.na(bootstrap_indices[1])){
+      all_dat<-all_dat[bootstrap_indices,]
+    }
+
+    if(normalise_data){
+      col.names<-names(all_dat)
+      # only for prev resid and current simflow
+      prevresid_norm_dat<-normalise(all_dat[,1])
+      simflow_norm_dat<-normalise(all_dat[,2])
+      all_dat<-cbind(prevresid_norm_dat$normalised_data,
+                     simflow_norm_dat$normalised_data,
+                     all_dat[,3])
+      colnames(all_dat)<-col.names
+      all_dat<-as.data.frame(all_dat)
+    }
+  } else {
+    all_dat<-get_CDNP_clusters_output$all_dat
+  }
+
+
+  if(!is.na(seed)) set.seed(seed)
+  resid_sim<-rep(NA,length(simflow))
+  prev_error<-initial_resid
+  for(dd in 1:length(simflow)){
+    # if(dd==40) browser()
+    if(dd>1){
+      prev_error<-resid_sim[dd-1]
+    }
+    cur_simflow<-simflow[dd]
+    # find the cluster condition
+    if(normalise_data){
+      # removed data.frame to speed up processing
+      # new_data<-data.frame(ts_data_resid_tminus1=normalise(prev_error,
+      #                                                      min_vals = prevresid_norm_dat$min_vals,
+      #                                                      max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+      #                      ts_data_simflow=normalise(cur_simflow,
+      #                                                min_vals = simflow_norm_dat$min_vals,
+      #                                                max_vals = simflow_norm_dat$max_vals)$normalised_data)
+      new_data<-matrix(c(normalise(prev_error,min_vals = prevresid_norm_dat$min_vals,max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+                         normalise(cur_simflow,min_vals = simflow_norm_dat$min_vals,max_vals = simflow_norm_dat$max_vals)$normalised_data),ncol=2)
+    } else {
+      # removed data.frame to speed up processing
+      # new_data<-data.frame(ts_data_resid_tminus1=prev_error,ts_data_simflow=cur_simflow)
+      new_data<-matrix(c(prev_error,cur_simflow),ncol=2)
+    }
+
+    predicted_cluster<-predict_kmeans(new_data,kmeans_model)
+
+    cluster_indices<-which(kmeans_model$cluster==predicted_cluster)
+    if(length(cluster_indices)==0) stop("Couldn't find the cluster condition - perhaps rerun get_CDNP_clusters again")
+    errors_to_sample<-all_dat[cluster_indices,3]
+    if(!prevent_neg_flow_after_sample){
+      if(any(errors_to_sample>cur_simflow)){
+        errors_to_sample<-errors_to_sample[-which(errors_to_sample>cur_simflow)]
+        errors_to_sample<-c(errors_to_sample,cur_simflow)
+      }
+    }
+
+    error_sample<-sample(x=errors_to_sample,size=1)
+
+    if(prevent_neg_flow_after_sample){
+      if(error_sample>cur_simflow){
+        error_sample<-cur_simflow
+      }
+    }
+
+    resid_sim[dd]<-error_sample
+    # if(error_sample < (-20)) browser()
+  }
+  return(resid_sim)
+}
 
 #' Create lookup table that determines the conditional probabilities
 #'
@@ -439,6 +814,12 @@ CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed
       # mean
       bin_to_sample<-bin_residuals[[sampled_lookup_row_index]]
       error_sample<-min(mean(bin_to_sample),cur_simflow)
+    } else if(sampling_method==6){
+      # resamples from the bin
+      # ensure no negative flows by setting to zero
+      bin_to_sample<-bin_residuals[[sampled_lookup_row_index]]
+      error_sample<-sample(bin_to_sample,1)
+      if(error_sample>cur_simflow) error_sample<-cur_simflow
     } else {
       stop("Not legitimate sampling_method")
     }
@@ -489,7 +870,8 @@ check_data_ok<-function(obs_or_resid,warmup=1095){
 #' optimal_ncluster_and_nbins_out$optim$bestmem
 #'
 get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,itermax=50,
-                                         lower=c(2,2),upper=c(100,100)){
+                                         lower=c(2,2),upper=c(100,100),sampling_method=2,
+                                         optim_method=4){
   if(length(resid)!=length(simflow)) stop("length of residual is different to length of streamflow")
   if(warmup>length(simflow)) stop("warmup is longer than the length of time series")
   if(!check_data_ok(resid)) stop("not enough data to split the time series")
@@ -517,9 +899,15 @@ get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,iterm
   tail(simflow_withwarm_spl2[-(1:warmup)])
   tail(simflow_nowarm_spl2)
 
-  compute_alpha_for_optim<-function(par,nrep=nrep){
-    ncluster<-ceiling(par[1])
-    nbin<-ceiling(par[2])
+  compute_alpha_for_optim<-function(par,nrep=nrep,use_round=F){
+    if(use_round){
+      ncluster<-round(par[1])
+      nbin<-round(par[2])
+    } else {
+      ncluster<-ceiling(par[1])
+      nbin<-ceiling(par[2])
+    }
+
 
     cluster_out_spl<-get_CDNP_clusters(ncluster=ncluster,nbin=nbin,ts_data_resid=resid_nowarm_spl1,
                                        ts_data_simflow=simflow_nowarm_spl1,use_quantile_spacing=T,seed=45)
@@ -527,7 +915,7 @@ get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,iterm
 
     all_CDNP_sim_out<-matrix(NA,nrow=length(simflow_withwarm_spl2)-warmup,ncol=nrep)
     for(rrr in 1:nrep){
-      CDNP_sim_out<-CDNP_sim(all_posterior_lookup_spl,simflow_withwarm_spl2,seed=rrr)
+      CDNP_sim_out<-CDNP_sim(all_posterior_lookup_spl,simflow_withwarm_spl2,seed=rrr,sampling_method=sampling_method)
       # lines(CDNP_sim_out,col=2,lty=2)
       CDNP_sim_out_nowarm<-CDNP_sim_out[-(1:warmup)]
       all_CDNP_sim_out[,rrr]<-CDNP_sim_out_nowarm
@@ -542,13 +930,129 @@ get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,iterm
   # opt<-optim(par<-as.integer(c(10,10)),compute_alpha_for_optim,method="SANN",control=list(fnscale=-1,trace=1))
   # opt<-optim(par<-as.integer(c(10,10)),compute_alpha_for_optim,control=list(fnscale=-1,trace=1))
 
-  # library(DEoptim)
-  # Mapping function to ensure integers
-  map_fun <- function(x) {
-    return(ceiling(x))
+
+  if(optim_method==1){
+    # library(DEoptim)
+    # Mapping function to ensure integers
+    map_fun <- function(x) {
+      return(ceiling(x))
+    }
+    deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
+                            fnMap = map_fun,control=list(trace=1,itermax=itermax),nrep=nrep)
+  } else if(optim_method==2){
+
+    var_length<-round(sqrt(itermax))
+
+    trial_cluster<-round(seq(lower[1],upper[1],length.out=var_length))
+    trial_bin<-round(seq(lower[2],upper[2],length.out=var_length))
+    exgrid<-as.matrix(expand.grid(trial_cluster,trial_bin))
+    all_alpha<-c()
+    for(rrr in 1:nrow(exgrid)){
+      alph<-compute_alpha_for_optim(c(exgrid[rrr,]),nrep=nrep)
+      all_alpha<-c(all_alpha,alph)
+    }
+    best_nclust_nbin<-c(exgrid[which.min(all_alpha),])
+    best_alpha<-all_alpha[which.min(all_alpha)]
+
+    deopt<-list(optim=list(bestmem=best_nclust_nbin,bestval=best_alpha))
+  } else if(optim_method==3){
+    map_fun <- function(x) {
+      return(round(x))
+    }
+    deopt<-DEoptim::DEoptim(compute_alpha_for_optim_round,lower=lower,upper=upper,
+                            fnMap = map_fun,control=list(trace=1,itermax=itermax),nrep=nrep)
+  } else if(optim_method==4){
+    map_fun <- function(par) {
+      par_j <- par + runif(length(par), -0.49, 0.49)  # jitter before rounding
+
+
+      random_int_vector <- function(lower, upper) {
+        mapply(function(lo, up) sample(lo:up, 1), lo = lower, up = upper)
+      }
+      # occasionally re-randomize (say 5% chance)
+      if (runif(1) < 0.05) {
+        par_j <- random_int_vector(lower, upper)
+      }
+
+      return(pmin(pmax(round(par_j), lower), upper))          # round + clip to bounds
+    }
+    deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
+                            fnMap = map_fun,control=list(trace=1,itermax=itermax,CR=0.9,NP=30,F=0.6),nrep=nrep,
+                            use_round=T)
+
+  } else if(optim_method==5){
+    random_int_vector <- function(lower, upper) {
+      mapply(function(lo, up) sample(lo:up, 1), lo = lower, up = upper)
+    }
+    map_fun <- function(par) {
+      par_j <- par + runif(length(par), -0.49, 0.49)  # jitter before rounding
+
+      # occasionally re-randomize (say 5% chance)
+      # if (runif(1) < 0.05) {
+      #   par_j <- random_int_vector(lower, upper)
+      # }
+
+      return(pmin(pmax(round(par_j), lower), upper))          # round + clip to bounds
+    }
+    deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
+                            fnMap = map_fun,control=list(trace=1,itermax=4,CR=0.9,NP=30,F=0.6),nrep=nrep,
+                            use_round=T)
+    for(iter in 1:round(itermax/4)){
+      cat(iter,"/",round(itermax/4),"\n")
+      new_pop<-deopt$member$pop
+      indices_to_replace<-which(runif(nrow(new_pop))<0.05)
+      if(length(indices_to_replace)>0){
+        for(rrr in 1:length(indices_to_replace)){
+          new_pop[indices_to_replace[rrr],]<-random_int_vector(lower, upper)
+        }
+
+      }
+      deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
+                              fnMap = map_fun,control=list(trace=1,itermax=4,CR=0.9,NP=30,F=0.6,
+                                                           initialpop=new_pop),nrep=nrep,
+                              use_round=T)
+    }
+
+
+  } else if(optim_method==6){
+    # reseed with totally new polulations
+    random_int_vector <- function(lower, upper) {
+      mapply(function(lo, up) sample(lo:up, 1), lo = lower, up = upper)
+    }
+    map_fun <- function(par) {
+      par_j <- par + runif(length(par), -0.49, 0.49)  # jitter before rounding
+
+      # occasionally re-randomize (say 5% chance)
+      if (runif(1) < 0.05) {
+        par_j <- random_int_vector(lower, upper)
+      }
+
+      return(pmin(pmax(round(par_j), lower), upper))          # round + clip to bounds
+    }
+    itermax_part<-max(round(itermax/5),1)
+    deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
+                            fnMap = map_fun,control=list(trace=1,itermax=itermax_part,CR=0.9,NP=30,F=0.6),nrep=nrep,
+                            use_round=T)
+
+    for(iter in 1:max(round(itermax/itermax_part),1)){
+      cat(iter,"/",max(round(itermax/itermax_part),1),"\n")
+      new_pop<-deopt$member$pop
+      best_so_far <- deopt$optim$bestmem
+      new_pop[1,]<-best_so_far
+      for(rrr in 2:nrow(new_pop)){
+        new_pop[rrr,]<-random_int_vector(lower, upper)
+      }
+
+      deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
+                              fnMap = map_fun,control=list(trace=1,itermax=itermax_part,CR=0.9,NP=30,F=0.6,
+                                                           initialpop=new_pop),nrep=nrep,
+                              use_round=T)
+    }
+
+  } else {
+    stop("optim_method not valid")
   }
-  deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
-                 fnMap = map_fun,control=list(trace=1,itermax=itermax),nrep=nrep)
+
 
   # all_pars<-as.matrix(expand.grid(10:30,10:30))
   # all_alpha<-rep(NA,nrow(all_pars))
@@ -561,3 +1065,116 @@ get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,iterm
 }
 
 
+get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,itermax=20,
+                                         lower=5,upper=100,prevent_neg_flow_after_sample=T,...){
+  if(exists("prevent_zeroflow_after_sample")){
+    prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
+  }
+
+  if(length(resid)!=length(simflow)) stop("length of residual is different to length of streamflow")
+  if(warmup>length(simflow)) stop("warmup is longer than the length of time series")
+  if(!check_data_ok(resid)) stop("not enough data to split the time series")
+  resid_nowarm<-resid[-(1:(warmup))]
+  simflow_nowarm<-simflow[-(1:(warmup))]
+  if(!all(is.na(USresid)) & length(simflow)==length(USresid)){
+    USresid_nowarm<-USresid[-(1:(warmup))]
+  }
+
+  split_index<-ceiling(length(resid_nowarm)/2)
+
+  resid_nowarm_spl1<-resid_nowarm[1:split_index]
+  resid_nowarm_spl2<-resid_nowarm[(split_index+1):length(resid_nowarm)]
+
+  simflow_nowarm_spl1<-simflow_nowarm[1:split_index]
+  simflow_nowarm_spl2<-simflow_nowarm[(split_index+1):length(simflow_nowarm)]
+
+  if(!all(is.na(USresid)) & length(simflow)==length(USresid)){
+    USresid_nowarm_spl1<-USresid_nowarm[1:split_index]
+    USresid_nowarm_spl2<-USresid_nowarm[(split_index+1):length(USresid_nowarm)]
+  } else {
+    USresid_nowarm_spl1<-NA
+    USresid_nowarm_spl2<-NA
+  }
+
+  simflow_withwarm_spl1<-simflow[1:(split_index+warmup)]
+  head(simflow_withwarm_spl1[-(1:warmup)])
+  head(simflow_nowarm_spl1)
+  tail(simflow_withwarm_spl1[-(1:warmup)])
+  tail(simflow_nowarm_spl1)
+
+  simflow_withwarm_spl2<-simflow_nowarm[((split_index+1)-warmup):length(simflow_nowarm)]
+  length(((split_index+1)-warmup):(split_index))
+  head(simflow_withwarm_spl2[-(1:warmup)])
+  head(simflow_nowarm_spl2)
+  tail(simflow_withwarm_spl2[-(1:warmup)])
+  tail(simflow_nowarm_spl2)
+
+  if(!all(is.na(USresid)) & length(simflow)==length(USresid)){
+    USresid_withwarm_spl1<-USresid[1:(split_index+warmup)]
+    USresid_withwarm_spl2<-USresid[((split_index+1)-warmup):length(USresid_nowarm)]
+  } else {
+    USresid_withwarm_spl1<-NA
+    USresid_withwarm_spl2<-NA
+  }
+
+  compute_alpha_for_optim<-function(par,nrep=nrep){
+
+    ncluster<-ceiling(par[1])
+    # nbin<-ceiling(par[2])
+
+    cluster_out_spl<-get_CDNP_clusters(ncluster=ncluster,nbin=NA,ts_data_resid=resid_nowarm_spl1,
+                                       ts_data_simflow=simflow_nowarm_spl1,ts_data_USresid=USresid_nowarm_spl1,use_quantile_spacing=T,seed=45)
+    # all_posterior_lookup_spl<-get_CDNP_posterior_lookup(cluster_out_spl)
+
+    all_CDNP_sim_out<-matrix(NA,nrow=length(simflow_withwarm_spl2)-warmup,ncol=nrep)
+    for(rrr in 1:nrep){
+      CDNP_sim_out<-CDNP_clusters_sim(cluster_out_spl,simflow_withwarm_spl2,USresid=USresid_withwarm_spl2,seed=rrr,recompute_all_dat=F,
+                                      prevent_neg_flow_after_sample=prevent_neg_flow_after_sample)
+      # lines(CDNP_sim_out,col=2,lty=2)
+      CDNP_sim_out_nowarm<-CDNP_sim_out[-(1:warmup)]
+      all_CDNP_sim_out[,rrr]<-CDNP_sim_out_nowarm
+    }
+
+    # compute_alpha_reliability(all_CDNP_sim_out,orig_resid_nowarm_spl1)
+    alpha<-compute_alpha_reliability(all_CDNP_sim_out,resid_nowarm_spl2)
+    cat("Sampled pars:",par,"Alpha:",alpha,"\n")
+    return(-alpha)
+  }
+
+  # opt<-optim(par<-as.integer(c(10,10)),compute_alpha_for_optim,method="SANN",control=list(fnscale=-1,trace=1))
+  # opt<-optim(par<-as.integer(c(10,10)),compute_alpha_for_optim,control=list(fnscale=-1,trace=1))
+
+  all_alpha<-c()
+  trial_k<-round(seq(lower,upper,length.out=itermax))
+  # trial_k<-c(150,200,300,400,500)
+  for(kkk in trial_k){
+    alph<-compute_alpha_for_optim(kkk,nrep=nrep)
+    all_alpha<-c(all_alpha,alph)
+  }
+
+  best_k<-trial_k[which.min(all_alpha)]
+  best_alpha<-all_alpha[which.min(all_alpha)]
+  return(list(best_k=best_k,best_alpha=best_alpha))
+
+  # optimize(compute_alpha_for_optim, interval = c(lower, upper), tol = 1,nrep=nrep)
+  # opt<-optim(50,fn=compute_alpha_for_optim,method="Brent",lower=lower,upper=upper,control=list(reltol=0.01),nrep=2)
+
+  # library(DEoptim)
+  # Mapping function to ensure integers
+  # map_fun <- function(x) {
+  #   return(ceiling(x))
+  # }
+  # deopt<-DEoptim::DEoptim(compute_alpha_for_optim,lower=lower,upper=upper,
+  #                         control=list(trace=1,itermax=itermax),nrep=nrep) # fnMap = map_fun
+
+
+  # all_pars<-as.matrix(expand.grid(10:30,10:30))
+  # all_alpha<-rep(NA,nrow(all_pars))
+  # for(pp in 1:nrow(all_pars)){
+  #   cat(pp,"/",nrow(all_pars),"\n")
+  #   pars<-all_pars[pp,]
+  #   all_alpha[pp]<-compute_alpha_for_optim(pars)
+  # }
+  # return(deopt)
+
+}
