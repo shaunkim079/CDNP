@@ -81,16 +81,23 @@ get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_d
     to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]))
   }
 
-  if(length(to_remove)>0) all_dat<-all_dat[-to_remove,]
+  obsflow_dat<-ts_data_simflow-ts_data_resid
+
+  if(length(to_remove)>0){
+    all_dat<-all_dat[-to_remove,]
+    obsflow_dat<-obsflow_dat[-to_remove]
+  }
+  if(any(obsflow_dat< -1e-10)) stop("Observed flow values should not be less than zero")
+
 
   # resample
   if(bootstrap){
     bootstrap_indices<-sample.int(n=nrow(all_dat),size=nrow(all_dat),replace = T)
     all_dat<-all_dat[bootstrap_indices,]
+    obsflow_dat<-obsflow_dat[bootstrap_indices]
   } else {
     bootstrap_indices<-NA
   }
-
 
   if(normalise_data){
     if(length(ts_data_USresid)==length(ts_data_simflow)){
@@ -189,7 +196,8 @@ get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_d
               simflow_norm_dat=simflow_norm_dat,
               USresid_norm_dat=USresid_norm_dat,
               bootstrap_indices=bootstrap_indices,
-              all_dat=all_dat))
+              all_dat=all_dat,
+              obsflow_dat=obsflow_dat))
 }
 
 get_CDNP_clusters_archive<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,use_quantile_spacing=T,normalise_data=T,seed=NA,bootstrap=F){
@@ -289,10 +297,196 @@ get_CDNP_clusters_archive<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simf
 #                                      ts_data_simflow=eg_data$sim)
 
 
+
 CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_resid=0,seed=NA,recompute_all_dat=F,prevent_neg_flow_after_sample=T,
-                                  simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,...){
+                            simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,sample_option=1,...){
   # simflow<-orig_simflow
   # initial_resid<-0
+  if(exists("prevent_zeroflow_after_sample")){
+    prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
+  }
+
+  orig_simflow<-get_CDNP_clusters_output$orig_simflow
+  orig_resid<-get_CDNP_clusters_output$orig_resid
+  orig_USresid<-get_CDNP_clusters_output$orig_USresid
+  resid_intervals<-get_CDNP_clusters_output$resid_intervals
+  kmeans_model<-get_CDNP_clusters_output$kmeans_model
+  normalise_data<-get_CDNP_clusters_output$normalise_data
+  prevresid_norm_dat<-get_CDNP_clusters_output$prevresid_norm_dat
+  simflow_norm_dat<-get_CDNP_clusters_output$simflow_norm_dat
+  USresid_norm_dat<-get_CDNP_clusters_output$USresid_norm_dat
+  bootstrap_indices<-get_CDNP_clusters_output$bootstrap_indices
+  obsflow_dat<-get_CDNP_clusters_output$obsflow_dat
+
+  if(recompute_all_dat){
+    ts_data_resid_tminus1<-c(NA,orig_resid[-length(orig_resid)])
+    if(!all(is.na(orig_USresid))){
+      all_dat<-cbind(ts_data_resid_tminus1,orig_simflow,orig_USresid,orig_resid)
+      all_dat<-as.data.frame(all_dat)
+      to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]) | is.na(all_dat[,4]))
+    } else {
+      all_dat<-cbind(ts_data_resid_tminus1,orig_simflow,orig_resid)
+      all_dat<-as.data.frame(all_dat)
+      to_remove<-which(is.na(all_dat[,1]) | is.na(all_dat[,2]) | is.na(all_dat[,3]))
+    }
+
+    obsflow_dat<-orig_simflow-orig_resid
+
+    if(length(to_remove)>0){
+      all_dat<-all_dat[-to_remove,]
+      obsflow_dat<-obsflow_dat[-to_remove]
+    }
+    if(any(obsflow_dat< -1e-10)) stop("Observed flow values should not be less than zero")
+
+    if(!is.na(bootstrap_indices[1])){
+      all_dat<-all_dat[bootstrap_indices,]
+      obsflow_dat<-obsflow_dat[bootstrap_indices]
+    }
+
+    if(normalise_data){
+      col.names<-names(all_dat)
+      if(!all(is.na(orig_USresid))){
+        # only for prev resid, current simflow, US resid
+        prevresid_norm_dat<-normalise(all_dat[,1])
+        simflow_norm_dat<-normalise(all_dat[,2])
+        USresid_norm_dat<-normalise(all_dat[,3])
+        all_dat<-cbind(prevresid_norm_dat$normalised_data,
+                       simflow_norm_dat$normalised_data,
+                       USresid_norm_dat$normalised_data,
+                       all_dat[,4])
+      } else {
+        # only for prev resid and current simflow
+        prevresid_norm_dat<-normalise(all_dat[,1])
+        simflow_norm_dat<-normalise(all_dat[,2])
+        all_dat<-cbind(prevresid_norm_dat$normalised_data,
+                       simflow_norm_dat$normalised_data,
+                       all_dat[,3])
+      }
+
+      colnames(all_dat)<-col.names
+      all_dat<-as.data.frame(all_dat)
+    }
+  } else {
+    all_dat<-get_CDNP_clusters_output$all_dat
+  }
+
+
+  if(!is.na(seed)) set.seed(seed)
+  resid_sim<-rep(NA,length(simflow))
+  prev_error<-initial_resid
+  for(dd in 1:length(simflow)){
+    # if(dd==40) browser()
+    if(dd>1){
+      prev_error<-resid_sim[dd-1]
+    }
+    cur_simflow<-simflow[dd]
+    if(!all(is.na(orig_USresid))){
+      cur_USerror<-USresid[dd]
+    }
+    # find the cluster condition
+    if(normalise_data){
+      # removed data.frame to speed up processing
+      # new_data<-data.frame(ts_data_resid_tminus1=normalise(prev_error,
+      #                                                      min_vals = prevresid_norm_dat$min_vals,
+      #                                                      max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+      #                      ts_data_simflow=normalise(cur_simflow,
+      #                                                min_vals = simflow_norm_dat$min_vals,
+      #                                                max_vals = simflow_norm_dat$max_vals)$normalised_data)
+      if(!all(is.na(orig_USresid))){
+        new_data<-matrix(c(normalise(prev_error,min_vals = prevresid_norm_dat$min_vals,max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+                           normalise(cur_simflow,min_vals = simflow_norm_dat$min_vals,max_vals = simflow_norm_dat$max_vals)$normalised_data,
+                           normalise(cur_USerror,min_vals = USresid_norm_dat$min_vals,max_vals = USresid_norm_dat$max_vals)$normalised_data),ncol=3)
+      } else {
+        new_data<-matrix(c(normalise(prev_error,min_vals = prevresid_norm_dat$min_vals,max_vals = prevresid_norm_dat$max_vals)$normalised_data,
+                           normalise(cur_simflow,min_vals = simflow_norm_dat$min_vals,max_vals = simflow_norm_dat$max_vals)$normalised_data),ncol=2)
+      }
+
+    } else {
+      # removed data.frame to speed up processing
+      # new_data<-data.frame(ts_data_resid_tminus1=prev_error,ts_data_simflow=cur_simflow)
+      if(!all(is.na(orig_USresid))){
+        new_data<-matrix(c(prev_error,cur_simflow,cur_USerror),ncol=3)
+      } else {
+        new_data<-matrix(c(prev_error,cur_simflow),ncol=2)
+      }
+    }
+
+    predicted_cluster<-predict_kmeans(new_data,kmeans_model)
+
+    cluster_indices<-which(kmeans_model$cluster==predicted_cluster)
+    if(length(cluster_indices)==0) stop("Couldn't find the cluster condition - perhaps rerun get_CDNP_clusters again")
+
+    if(sample_option==3){
+      # sample_option==3 samples both the residual error and the observed flow assuming they are both as likely
+      # The samples are treated differently depending whether the residual error or observed flow is sampled
+      resid_or_obs<-sample(2,size = 1)
+    } else {
+      resid_or_obs<-0
+    }
+    if(sample_option==1 | (sample_option==3 & resid_or_obs==1)){
+      # sample_option==1 samples the residual error and subtracts it from the simulated flow
+      if(!all(is.na(orig_USresid))){
+        errors_to_sample<-all_dat[cluster_indices,4]
+      } else {
+        errors_to_sample<-all_dat[cluster_indices,3]
+      }
+      if(!prevent_neg_flow_after_sample){
+        if(any(errors_to_sample>cur_simflow)){
+          errors_to_sample<-errors_to_sample[-which(errors_to_sample>cur_simflow)]
+          errors_to_sample<-c(errors_to_sample,cur_simflow)
+        }
+      }
+      error_sample<-sample(x=errors_to_sample,size=1)
+
+      if(prevent_neg_flow_after_sample){
+        # if necessary inverse transforms the data and then see if there are negatives then retransforms
+        error_sample_tmp<-error_sample
+        cur_simflow_tmp<-cur_simflow
+        if(!is.null(simflow_invtrans)){
+          if(is.null(simflow_trans)) stop("Missing simflow transformation")
+          cur_simflow_tmp<-simflow_invtrans(cur_simflow_tmp)
+        }
+        if(!is.null(resid_invtrans)){
+          if(is.null(resid_trans)) stop("Missing resid transformation")
+          error_sample_tmp<-resid_invtrans(error_sample_tmp)
+        }
+        if(error_sample_tmp>cur_simflow_tmp){
+          error_sample_tmp<-cur_simflow_tmp
+        }
+        if(!is.null(simflow_trans)){
+          if(is.null(simflow_invtrans)) stop("Missing simflow inv transformation")
+          cur_simflow_tmp<-simflow_trans(cur_simflow_tmp)
+        }
+        if(!is.null(resid_trans)){
+          if(is.null(resid_invtrans)) stop("Missing resid inv transformation")
+          error_sample_tmp<-resid_trans(error_sample_tmp)
+        }
+        error_sample<-error_sample_tmp
+        cur_simflow<-cur_simflow_tmp
+
+      }
+      resid_sim[dd]<-error_sample
+
+    } else if(sample_option==2 | (sample_option==3 & resid_or_obs==2)){
+      # sample_option==2 samples the observed flow and determines what the residual error should be based on that
+      obs_to_sample<-obsflow_dat[cluster_indices]
+      obs_sample<-sample(x=obs_to_sample,size=1)
+      resid_sim[dd]<-cur_simflow-obs_sample
+
+    } else {
+      stop("invalid sample_option")
+    }
+
+  }
+  return(resid_sim)
+}
+
+# CDNP_clusters_sim(get_CDNP_clusters_output,simflow=runif(15,0,3),initial_resid=0,seed=1,recompute_all_dat=F)
+
+
+CDNP_clusters_sim_archive2<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_resid=0,seed=NA,recompute_all_dat=F,prevent_neg_flow_after_sample=T,
+                                     simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,...){
+
   if(exists("prevent_zeroflow_after_sample")){
     prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
   }
@@ -446,8 +640,6 @@ CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_
   }
   return(resid_sim)
 }
-
-# CDNP_clusters_sim(get_CDNP_clusters_output,simflow=runif(15,0,3),initial_resid=0,seed=1,recompute_all_dat=F)
 
 CDNP_clusters_sim_archive<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_resid=0,seed=NA,recompute_all_dat=F,prevent_neg_flow_after_sample=T,...){
   # simflow<-orig_simflow
@@ -1140,7 +1332,8 @@ get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,iterm
 
 get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,itermax=20,
                                          lower=5,upper=100,prevent_neg_flow_after_sample=T,
-                               simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,...){
+                               simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,
+                               sample_option=1,...){
   if(exists("prevent_zeroflow_after_sample")){
     prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
   }
@@ -1207,7 +1400,8 @@ get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,iter
                                       simflow_trans=simflow_trans,
                                       resid_trans=resid_trans,
                                       simflow_invtrans=simflow_invtrans,
-                                      resid_invtrans=resid_invtrans)
+                                      resid_invtrans=resid_invtrans,
+                                      sample_option=sample_option)
       # lines(CDNP_sim_out,col=2,lty=2)
       CDNP_sim_out_nowarm<-CDNP_sim_out[-(1:warmup)]
       all_CDNP_sim_out[,rrr]<-CDNP_sim_out_nowarm
