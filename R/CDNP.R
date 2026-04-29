@@ -211,7 +211,7 @@ get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_d
 CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_resid=0,seed=NA,recompute_all_dat=F,prevent_neg_flow_after_sample=T,
                             simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,sample_option=1,...){
 
-  # below is just to ensure old scripts work with inaccurate argument - should eventually be removed
+  # below is just to ensure old scripts work with inaccurate argument name - should eventually be removed
   if(exists("prevent_zeroflow_after_sample")){
     prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
   }
@@ -324,7 +324,7 @@ CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_
     predicted_cluster<-predict_kmeans(new_data,kmeans_model)
 
     cluster_indices<-which(kmeans_model$cluster==predicted_cluster)
-    if(length(cluster_indices)==0) stop("Couldn't find the cluster condition - perhaps rerun get_CDNP_clusters again")
+    if(length(cluster_indices)==0) stop("Couldn't find the cluster condition - perhaps run get_CDNP_clusters again")
 
     if(sample_option==3){
       # sample_option==3 samples both the residual error and the observed flow assuming they are both as likely
@@ -707,7 +707,11 @@ CDNP_sim<-function(get_CDNP_posterior_lookup_output,simflow,initial_resid=0,seed
 
 # just checks to see if period is split (accounting for warmup) if there's valid data in each period
 check_data_ok<-function(obs_or_resid,warmup=1095,number_required=1){
-  obs_or_resid_nowarm<-obs_or_resid[-(1:(warmup))]
+  if(warmup>0){
+    obs_or_resid_nowarm<-obs_or_resid[-(1:(warmup))]
+  } else {
+    obs_or_resid_nowarm<-obs_or_resid
+  }
 
   split_index<-ceiling(length(obs_or_resid_nowarm)/2)
 
@@ -949,8 +953,8 @@ get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,iterm
 get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,itermax=20,
                                          lower=5,upper=100,prevent_neg_flow_after_sample=T,
                                simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,
-                               sample_option=1,...){
-  # below is just to ensure old scripts work with inaccurate argument - should eventually be removed
+                               sample_option=1,fold=F,...){
+  # below is just to ensure old scripts work with inaccurate argument name - should eventually be removed
   if(exists("prevent_zeroflow_after_sample")){
     prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
   }
@@ -1001,18 +1005,35 @@ get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,iter
     USresid_withwarm_spl2<-NA
   }
 
-  compute_alpha_for_optim<-function(par,nrep=nrep){
+  compute_alpha_for_optim<-function(par,nrep=nrep,setup_first_half=T){
 
     ncluster<-ceiling(par[1])
     # nbin<-ceiling(par[2])
+    if(setup_first_half){
+      resid_nowarm_setup<-resid_nowarm_spl1
+      simflow_nowarm_setup<-simflow_nowarm_spl1
+      USresid_nowarm_setup<-USresid_nowarm_spl1
 
-    cluster_out_spl<-get_CDNP_clusters(ncluster=ncluster,nbin=NA,ts_data_resid=resid_nowarm_spl1,
-                                       ts_data_simflow=simflow_nowarm_spl1,ts_data_USresid=USresid_nowarm_spl1,use_quantile_spacing=T,seed=45)
+      simflow_withwarm_test<-simflow_withwarm_spl2
+      USresid_withwarm_test<-USresid_withwarm_spl2
+      resid_nowarm_test<-resid_nowarm_spl2
+    } else {
+      resid_nowarm_setup<-resid_nowarm_spl2
+      simflow_nowarm_setup<-simflow_nowarm_spl2
+      USresid_nowarm_setup<-USresid_nowarm_spl2
+
+      simflow_withwarm_test<-simflow_withwarm_spl1
+      USresid_withwarm_test<-USresid_withwarm_spl1
+      resid_nowarm_test<-resid_nowarm_spl1
+    }
+
+    cluster_out_spl<-get_CDNP_clusters(ncluster=ncluster,nbin=NA,ts_data_resid=resid_nowarm_setup,
+                                       ts_data_simflow=simflow_nowarm_setup,ts_data_USresid=USresid_nowarm_setup,use_quantile_spacing=T,seed=45)
     # all_posterior_lookup_spl<-get_CDNP_posterior_lookup(cluster_out_spl)
 
-    all_CDNP_sim_out<-matrix(NA,nrow=length(simflow_withwarm_spl2)-warmup,ncol=nrep)
+    all_CDNP_sim_out<-matrix(NA,nrow=length(simflow_withwarm_test)-warmup,ncol=nrep)
     for(rrr in 1:nrep){
-      CDNP_sim_out<-CDNP_clusters_sim(cluster_out_spl,simflow_withwarm_spl2,USresid=USresid_withwarm_spl2,seed=rrr,recompute_all_dat=F,
+      CDNP_sim_out<-CDNP_clusters_sim(cluster_out_spl,simflow_withwarm_test,USresid=USresid_withwarm_test,seed=rrr,recompute_all_dat=F,
                                       prevent_neg_flow_after_sample=prevent_neg_flow_after_sample,
                                       simflow_trans=simflow_trans,
                                       resid_trans=resid_trans,
@@ -1025,8 +1046,8 @@ get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,iter
     }
 
     # compute_alpha_reliability(all_CDNP_sim_out,orig_resid_nowarm_spl1)
-    alpha<-compute_alpha_reliability(all_CDNP_sim_out,resid_nowarm_spl2)
-    cat("Sampled pars:",par,"Alpha:",alpha,"\n")
+    alpha<-compute_alpha_reliability(all_CDNP_sim_out,resid_nowarm_test)
+    cat("Sampled pars:",par,"Alpha:",alpha,"setup_first_half:",setup_first_half,"\n")
     return(-alpha)
   }
 
@@ -1038,6 +1059,10 @@ get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,iter
   # trial_k<-c(150,200,300,400,500)
   for(kkk in trial_k){
     alph<-compute_alpha_for_optim(kkk,nrep=nrep)
+    if(fold){
+      alph2<-compute_alpha_for_optim(kkk,nrep=nrep,setup_first_half=F)
+      alph<-(alph+alph2)/2
+    }
     all_alpha<-c(all_alpha,alph)
   }
 
