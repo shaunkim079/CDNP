@@ -6,26 +6,32 @@
 \usage{
 get_CDNP_clusters(
   nclusters,
-  nbin,
+  nbin = NA,
   ts_data_resid,
   ts_data_simflow,
+  ts_data_USresid = NA,
   use_quantile_spacing = T,
   normalise_data = T,
-  seed = NA
+  seed = NA,
+  bootstrap = F
 )
 }
 \arguments{
 \item{nclusters}{number of clusters to use}
 
-\item{nbin}{number of bins for the error residual. Equal to the number of intervals minus 1.}
+\item{nbin}{number of bins for the error residual. Determines the intervals if not NA (default). Equal to the number of intervals minus 1.}
 
 \item{ts_data_resid}{vector of residual errors. Should be the same length as ts_data_simflow.}
 
 \item{ts_data_simflow}{vector of streamflow. Should be the same length as ts_data_resid.}
 
-\item{use_quantile_spacing}{logical; if true uses quantiles to determine the error intervals. If false, uses equal size spacing of intervals.}
+\item{use_quantile_spacing}{logical; if true uses quantiles to determine the error intervals. If false, uses equal size spacing of intervals (default=TRUE).}
 
-\item{normalise_data}{logical; if true uses min-max normalisation for residual (at t-1) and streamflow.}
+\item{normalise_data}{logical; if true uses min-max normalisation for residual (at t-1) and streamflow (default=TRUE).}
+
+\item{seed}{numeric; optional seed that can be set if not NA (default).}
+
+\item{bootstrap}{logical; if true performs a bootstrap of the input data (default=FALSE).}
 }
 \value{
 returns a list of objects which is used by get_CDNP_posterior_lookup:\cr\cr
@@ -33,9 +39,10 @@ returns a list of objects which is used by get_CDNP_posterior_lookup:\cr\cr
 \verb{    }kmeans_model: k-mean model object\cr\cr
 \verb{    }orig_resid: vector; error residual (same as input)\cr\cr
 \verb{    }orig_simflow: vector; streamflow (same as input)\cr\cr
-\verb{    }normalise_data: logical; if true uses min-max normalisation for residual (at t-1) and streamflow (same as input).\cr\cr
+\verb{    }normalise_data: logical; if true uses min-max normalisation for residual (at t-1) and streamflow (same as input)\cr\cr
 \verb{    }prevresid_norm_dat: list; results from normalisation of residual (at t-1)\cr\cr
-\verb{    }simflow_norm_dat: list; results from normalisation of streamflow
+\verb{    }simflow_norm_dat: list; results from normalisation of streamflow\cr\cr
+\verb{    }bootstrap_indices: vector; resample indices from bootstrapping
 }
 \description{
 Get the k-means clusters based on error and streamflow data

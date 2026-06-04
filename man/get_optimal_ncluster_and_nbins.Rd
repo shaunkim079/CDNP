@@ -11,7 +11,9 @@ get_optimal_ncluster_and_nbins(
   nrep = 10,
   itermax = 50,
   lower = c(2, 2),
-  upper = c(100, 100)
+  upper = c(100, 100),
+  sampling_method = 2,
+  optim_method = 4
 )
 }
 \arguments{

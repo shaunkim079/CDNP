@@ -87,8 +87,7 @@ get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_d
     all_dat<-all_dat[-to_remove,]
     obsflow_dat<-obsflow_dat[-to_remove]
   }
-  if(any(obsflow_dat< -1e-10)) stop("Observed flow values should not be less than zero")
-
+  if(any(obsflow_dat< -1e-10)) cat("Observed flow values should not be less than zero. If transformations are used, the computed obs is invalid \n")
 
   # resample
   if(bootstrap){
@@ -207,7 +206,30 @@ get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_d
 #                                      ts_data_simflow=eg_data$sim)
 
 
-
+#' Simulate a daily time series of errors based on CDNP clusters
+#'
+#' @param get_CDNP_clusters_output output from get_CDNP_clusters function
+#' @param simflow vector; streamflow
+#' @param initial_resid numeric; initial residual error value (default=0)
+#' @param seed numeric; optional seed
+#' @param sample_option sample_option=1 (default) samples the residual error to be subtracted from the simulated flow,
+#' sample_option=2 samples the observed flow and determines what the residual error should be based on that,
+#' sample_option=3 samples both the residual error and the observed flow assuming they are both as likely
+#'
+#' @return vector; predicted errors the same length as simflow
+#' @export
+#'
+#' @examples
+#' library(CDNP)
+#' # first run get_CDNP_clusters function
+#' CDNP_clusters_out<-get_CDNP_clusters(nclusters=10,
+#'                                      ts_data_resid=eg_data$resid,
+#'                                      ts_data_simflow=eg_data$sim)
+#'
+#' # perform error simulation
+#' CDNP_clusters_sim_out<-CDNP_clusters_sim(CDNP_clusters_out,eg_data$sim,seed=42)
+#' plot(eg_data$resid,type="l") # original residual
+#' lines(CDNP_clusters_sim_out,col=2,lty=2) # a new simulated residual
 CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_resid=0,seed=NA,recompute_all_dat=F,prevent_neg_flow_after_sample=T,
                             simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,sample_option=1,...){
 
@@ -246,7 +268,7 @@ CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_
       all_dat<-all_dat[-to_remove,]
       obsflow_dat<-obsflow_dat[-to_remove]
     }
-    if(any(obsflow_dat< -1e-10)) stop("Observed flow values should not be less than zero")
+    if(any(obsflow_dat< -1e-10)) cat("Observed flow values should not be less than zero. If transformations are used, the computed obs is invalid \n")
 
     if(!is.na(bootstrap_indices[1])){
       all_dat<-all_dat[bootstrap_indices,]

@@ -22,7 +22,7 @@ CDNP_sim(
 \item{seed}{numeric; optional seed}
 
 \item{sampling_method}{sampling_method=1 assumes uniform distribution within bin (with truncation to avoid negative flows),
-sampling_method=2 (default) resamples from bin_residuals (excluding those that cause negative flows)}
+sampling_method=2 (default) resamples from bin_residuals (excluding those that cause negative flows), sampling_method=3 picks mid value of bin (avoids negatives)}
 }
 \value{
 vector; predicted errors the same length as simflow
