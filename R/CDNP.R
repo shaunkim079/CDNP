@@ -1,3 +1,5 @@
+# library(FNN)
+
 #' Normalise values to fit between 0 and 1
 #'
 #' @param vals numeric values to be normalised
@@ -26,7 +28,12 @@ normalise<-function(vals,min_vals=NA,max_vals=NA){
   return(list(normalised_data=out,min_vals=min_vals,max_vals=max_vals))
 }
 
-
+unnormalise<-function(x,min_vals,max_vals){
+  # unnormalise values from between 0 and 1
+  if(min_vals>=max_vals) stop("min_vals>=max_vals")
+  out<-x*(max_vals - min_vals)+min_vals
+  return(out)
+}
 
 #' Get the k-means clusters based on error and streamflow data
 #'
@@ -57,7 +64,7 @@ normalise<-function(vals,min_vals=NA,max_vals=NA){
 #'                                      ts_data_resid=eg_data$resid,
 #'                                      ts_data_simflow=eg_data$sim)
 #' CDNP_clusters_out
-get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_data_USresid=NA,use_quantile_spacing=T,normalise_data=T,seed=NA,bootstrap=F){
+get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_data_USresid=NA,use_quantile_spacing=F,normalise_data=T,seed=NA,bootstrap=F){
 
   # nclusters=10
   # ts_data_resid=eg_data$resid
@@ -231,8 +238,8 @@ get_CDNP_clusters<-function(nclusters,nbin=NA,ts_data_resid,ts_data_simflow,ts_d
 #' plot(eg_data$resid,type="l") # original residual
 #' lines(CDNP_clusters_sim_out,col=2,lty=2) # a new simulated residual
 CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_resid=0,seed=NA,recompute_all_dat=F,prevent_neg_flow_after_sample=T,
-                            simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,sample_option=1,...){
-
+                            simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,sample_option=1,useMedian=F,...){
+# browser()
   # below is just to ensure old scripts work with inaccurate argument name - should eventually be removed
   if(exists("prevent_zeroflow_after_sample")){
     prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
@@ -302,6 +309,8 @@ CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_
     all_dat<-get_CDNP_clusters_output$all_dat
   }
 
+  # plot(x=all_dat[,1],y=all_dat[,2])
+  # points(x=kmeans_model$centers[,1],y=kmeans_model$centers[,2],col=2,pch=2)
 
   if(!is.na(seed)) set.seed(seed)
   resid_sim<-rep(NA,length(simflow))
@@ -345,8 +354,14 @@ CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_
 
     predicted_cluster<-predict_kmeans(new_data,kmeans_model)
 
+    # points(x=kmeans_model$centers[predicted_cluster,1],y=kmeans_model$centers[predicted_cluster,2],col=3,pch=dd)
+
     cluster_indices<-which(kmeans_model$cluster==predicted_cluster)
-    if(length(cluster_indices)==0) stop("Couldn't find the cluster condition - perhaps run get_CDNP_clusters again")
+    if(length(cluster_indices)==0){
+      # cat("Couldn't find the cluster condition - perhaps run get_CDNP_clusters again\n")
+      # browser()
+      stop("Couldn't find the cluster condition - perhaps run get_CDNP_clusters again")
+    }
 
     if(sample_option==3){
       # sample_option==3 samples both the residual error and the observed flow assuming they are both as likely
@@ -369,6 +384,9 @@ CDNP_clusters_sim<-function(get_CDNP_clusters_output,simflow,USresid=NA,initial_
         }
       }
       error_sample<-sample(x=errors_to_sample,size=1)
+      if(exists("useMedian")){
+        if(useMedian) error_sample<-median(errors_to_sample)
+      }
 
       if(prevent_neg_flow_after_sample){
         # if necessary inverse transforms the data and then see if there are negatives then retransforms
@@ -566,6 +584,8 @@ get_CDNP_posterior_lookup<-function(get_CDNP_clusters_output){
               simflow_norm_dat=simflow_norm_dat))
 }
 
+
+
 #' Predict k-means cluster for a new point based on smallest Euclidean distance to cluster centroids
 #'
 #' @param new_data data.frame; first column: new error at t-1, second column: new streamflow at t
@@ -597,14 +617,21 @@ predict_kmeans <- function(new_data, kmeans_model) {
   n_clusters <- nrow(centers)
 
   # Initialize a vector to store predicted cluster assignments
-  predicted_clusters <- numeric(n_new_data)
+  # predicted_clusters <- numeric(n_new_data)
+  # for (j in 1:n_new_data) {
+  #   distances <- apply(centers, 1, function(x) {
+  #     dist(rbind(new_data[j, ], x))
+  #   })
+  #   predicted_clusters[j] <- which.min(distances) # index of the FIRST minimum
+  # }
 
-  for (j in 1:n_new_data) {
-    distances <- apply(centers, 1, function(x) {
-      dist(rbind(new_data[j, ], x))
-    })
-    predicted_clusters[j] <- which.min(distances) # index of the FIRST minimum
-  }
+  # using FNN library is way faster than above
+  predicted_clusters <- FNN::get.knnx(
+    centers,
+    new_data,
+    k = 1
+  )$nn.index[,1]
+
   return(predicted_clusters)
 }
 
@@ -971,15 +998,29 @@ get_optimal_ncluster_and_nbins<-function(resid,simflow,warmup=1095,nrep=10,iterm
   return(deopt)
 }
 
-
+alpha_reliability_objective<-function(sim,obs){
+  alpha<-compute_alpha_reliability(sim,obs)
+  return(-alpha)
+}
+crps_reliability_objective<-function(sim,obs){
+  crps<-mean(scoringRules::crps_sample(y=obs[!is.na(obs)],dat=sim[!is.na(obs),]))
+  return(crps)
+}
 get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,itermax=20,
                                          lower=5,upper=100,prevent_neg_flow_after_sample=T,
                                simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,
-                               sample_option=1,fold=F,...){
+                               sample_option=1,fold=F,normalise_data=T,reliability_objective=alpha_reliability_objective,
+                               use_q_reliability=F,...){
   # below is just to ensure old scripts work with inaccurate argument name - should eventually be removed
   if(exists("prevent_zeroflow_after_sample")){
     prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
   }
+
+  if(!is.null(simflow_trans) & is.null(simflow_invtrans)) stop("missing simflow inverse transformation")
+  if(is.null(simflow_trans) & !is.null(simflow_invtrans)) stop("missing simflow transformation")
+
+  if(!is.null(resid_trans) & is.null(resid_invtrans)) stop("missing resid inverse transformation")
+  if(is.null(resid_trans) & !is.null(resid_invtrans)) stop("missing resid transformation")
 
   if(length(resid)!=length(simflow)) stop("length of residual is different to length of streamflow")
   if(warmup>length(simflow)) stop("warmup is longer than the length of time series")
@@ -1027,7 +1068,12 @@ get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,iter
     USresid_withwarm_spl2<-NA
   }
 
-  compute_alpha_for_optim<-function(par,nrep=nrep,setup_first_half=T){
+  # if(!exists("use_q_reliability")){
+  #   use_q_reliability<-F
+  # }
+  compute_reliability_for_optim<-function(par,nrep=nrep,setup_first_half=T,
+                                    reliability_objective=reliability_objective,use_q_reliability=use_q_reliability,
+                                    simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL){
 
     ncluster<-ceiling(par[1])
     # nbin<-ceiling(par[2])
@@ -1050,8 +1096,24 @@ get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,iter
     }
 
     cluster_out_spl<-get_CDNP_clusters(ncluster=ncluster,nbin=NA,ts_data_resid=resid_nowarm_setup,
-                                       ts_data_simflow=simflow_nowarm_setup,ts_data_USresid=USresid_nowarm_setup,use_quantile_spacing=T,seed=45)
+                                       ts_data_simflow=simflow_nowarm_setup,ts_data_USresid=USresid_nowarm_setup,use_quantile_spacing=F,seed=45,
+                                       normalise_data=normalise_data)
     # all_posterior_lookup_spl<-get_CDNP_posterior_lookup(cluster_out_spl)
+
+    # get obs but account for transformations
+    if(!is.null(simflow_trans)){
+      simflow_nowarm_test_untrans<-simflow_trans(simflow_withwarm_test[-(1:warmup)])
+    } else {
+      simflow_nowarm_test_untrans<-simflow_withwarm_test[-(1:warmup)]
+    }
+
+    if(!is.null(resid_trans)){
+      resid_nowarm_test_untrans<-resid_trans(resid_nowarm_test)
+    } else {
+      resid_nowarm_test_untrans<-resid_nowarm_test
+    }
+
+    obsflow_nowarm_test_untrans<-simflow_nowarm_test_untrans-resid_nowarm_test_untrans
 
     all_CDNP_sim_out<-matrix(NA,nrow=length(simflow_withwarm_test)-warmup,ncol=nrep)
     for(rrr in 1:nrep){
@@ -1063,26 +1125,44 @@ get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,iter
                                       resid_invtrans=resid_invtrans,
                                       sample_option=sample_option)
       # lines(CDNP_sim_out,col=2,lty=2)
-      CDNP_sim_out_nowarm<-CDNP_sim_out[-(1:warmup)]
+      if(use_q_reliability){
+        if(!is.null(resid_invtrans)){
+          CDNP_sim_out_nowarm<-simflow_nowarm_test_untrans - resid_invtrans(CDNP_sim_out[-(1:warmup)])
+        } else {
+          CDNP_sim_out_nowarm<-simflow_nowarm_test_untrans - CDNP_sim_out[-(1:warmup)]
+        }
+
+      } else {
+        CDNP_sim_out_nowarm<-CDNP_sim_out[-(1:warmup)]
+      }
+
       all_CDNP_sim_out[,rrr]<-CDNP_sim_out_nowarm
     }
 
     # compute_alpha_reliability(all_CDNP_sim_out,orig_resid_nowarm_spl1)
-    alpha<-compute_alpha_reliability(all_CDNP_sim_out,resid_nowarm_test)
-    cat("Sampled pars:",par,"Alpha:",alpha,"setup_first_half:",setup_first_half,"\n")
-    return(-alpha)
+    # alpha<-compute_alpha_reliability(all_CDNP_sim_out,resid_nowarm_test)
+    # cat("Sampled pars:",par,"Alpha:",alpha,"setup_first_half:",setup_first_half,"\n")
+    if(use_q_reliability){
+      obj<-reliability_objective(all_CDNP_sim_out,obsflow_nowarm_test_untrans)
+    } else {
+      # Note: if there are transformations below evaluation will be of transformed data
+      obj<-reliability_objective(all_CDNP_sim_out,resid_nowarm_test)
+    }
+
+    cat("Sampled pars:",par,"obj:",obj,"setup_first_half:",setup_first_half,"\n")
+    # return(-alpha)
+    return(obj)
   }
 
   # opt<-optim(par<-as.integer(c(10,10)),compute_alpha_for_optim,method="SANN",control=list(fnscale=-1,trace=1))
   # opt<-optim(par<-as.integer(c(10,10)),compute_alpha_for_optim,control=list(fnscale=-1,trace=1))
-
   all_alpha<-c()
   trial_k<-round(seq(lower,upper,length.out=itermax))
   # trial_k<-c(150,200,300,400,500)
   for(kkk in trial_k){
-    alph<-compute_alpha_for_optim(kkk,nrep=nrep)
+    alph<-compute_reliability_for_optim(kkk,nrep=nrep,use_q_reliability=use_q_reliability,reliability_objective=reliability_objective)
     if(fold){
-      alph2<-compute_alpha_for_optim(kkk,nrep=nrep,setup_first_half=F)
+      alph2<-compute_reliability_for_optim(kkk,nrep=nrep,setup_first_half=F,use_q_reliability=use_q_reliability,reliability_objective=reliability_objective)
       alph<-(alph+alph2)/2
     }
     all_alpha<-c(all_alpha,alph)
@@ -1112,5 +1192,121 @@ get_optimal_ncluster<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,iter
   #   all_alpha[pp]<-compute_alpha_for_optim(pars)
   # }
   # return(deopt)
+
+}
+
+get_optimal_ncluster_single_period<-function(resid,simflow,USresid=NA,warmup=1095,nrep=10,itermax=20,
+                               lower=5,upper=100,prevent_neg_flow_after_sample=T,
+                               simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL,
+                               sample_option=1,normalise_data=T,reliability_objective=alpha_reliability_objective,
+                               use_q_reliability=F,...){
+  # below is just to ensure old scripts work with inaccurate argument name - should eventually be removed
+  if(exists("prevent_zeroflow_after_sample")){
+    prevent_neg_flow_after_sample<-prevent_zeroflow_after_sample
+  }
+
+  if(!is.null(simflow_trans) & is.null(simflow_invtrans)) stop("missing simflow inverse transformation")
+  if(is.null(simflow_trans) & !is.null(simflow_invtrans)) stop("missing simflow transformation")
+
+  if(!is.null(resid_trans) & is.null(resid_invtrans)) stop("missing resid inverse transformation")
+  if(is.null(resid_trans) & !is.null(resid_invtrans)) stop("missing resid transformation")
+
+  if(length(resid)!=length(simflow)) stop("length of residual is different to length of streamflow")
+  if(warmup>length(simflow)) stop("warmup is longer than the length of time series")
+  if(!check_data_ok(resid)) stop("not enough data to split the time series")
+  resid_nowarm<-resid[-(1:(warmup))]
+  simflow_nowarm<-simflow[-(1:(warmup))]
+  if(!all(is.na(USresid)) & length(simflow)==length(USresid)){
+    USresid_nowarm<-USresid[-(1:(warmup))]
+  } else {
+    USresid_nowarm<-NA
+  }
+
+  compute_reliability_for_optim<-function(par,nrep=nrep,
+                                          reliability_objective=reliability_objective,
+                                          use_q_reliability=use_q_reliability,
+                                          simflow_trans=NULL,resid_trans=NULL,simflow_invtrans=NULL,resid_invtrans=NULL){
+
+    ncluster<-ceiling(par[1])
+
+    resid_nowarm_setup<-resid_nowarm
+    simflow_nowarm_setup<-simflow_nowarm
+    USresid_nowarm_setup<-USresid_nowarm
+
+    simflow_withwarm_test<-simflow
+    USresid_withwarm_test<-USresid
+    resid_nowarm_test<-resid_nowarm
+
+    cluster_out_spl<-get_CDNP_clusters(ncluster=ncluster,nbin=NA,ts_data_resid=resid_nowarm_setup,
+                                       ts_data_simflow=simflow_nowarm_setup,ts_data_USresid=USresid_nowarm_setup,use_quantile_spacing=F,seed=45,
+                                       normalise_data=normalise_data)
+
+    # get obs but account for transformations
+    if(!is.null(simflow_trans)){
+      simflow_nowarm_test_untrans<-simflow_trans(simflow_withwarm_test[-(1:warmup)])
+    } else {
+      simflow_nowarm_test_untrans<-simflow_withwarm_test[-(1:warmup)]
+    }
+
+    if(!is.null(resid_trans)){
+      resid_nowarm_test_untrans<-resid_trans(resid_nowarm_test)
+    } else {
+      resid_nowarm_test_untrans<-resid_nowarm_test
+    }
+
+    obsflow_nowarm_test_untrans<-simflow_nowarm_test_untrans-resid_nowarm_test_untrans
+
+    all_CDNP_sim_out<-matrix(NA,nrow=length(simflow_withwarm_test)-warmup,ncol=nrep)
+    for(rrr in 1:nrep){
+      CDNP_sim_out<-CDNP_clusters_sim(cluster_out_spl,simflow_withwarm_test,USresid=USresid_withwarm_test,seed=rrr,recompute_all_dat=F,
+                                      prevent_neg_flow_after_sample=prevent_neg_flow_after_sample,
+                                      simflow_trans=simflow_trans,
+                                      resid_trans=resid_trans,
+                                      simflow_invtrans=simflow_invtrans,
+                                      resid_invtrans=resid_invtrans,
+                                      sample_option=sample_option)
+
+      if(use_q_reliability){
+        if(!is.null(resid_invtrans)){
+          CDNP_sim_out_nowarm<-simflow_nowarm_test_untrans - resid_invtrans(CDNP_sim_out[-(1:warmup)])
+        } else {
+          CDNP_sim_out_nowarm<-simflow_nowarm_test_untrans - CDNP_sim_out[-(1:warmup)]
+        }
+
+      } else {
+        CDNP_sim_out_nowarm<-CDNP_sim_out[-(1:warmup)]
+      }
+
+      # CDNP_sim_out_nowarm<-CDNP_sim_out[-(1:warmup)]
+      all_CDNP_sim_out[,rrr]<-CDNP_sim_out_nowarm
+    }
+
+    # compute_alpha_reliability(all_CDNP_sim_out,orig_resid_nowarm_spl1)
+    # alpha<-compute_alpha_reliability(all_CDNP_sim_out,resid_nowarm_test)
+    # cat("Sampled pars:",par,"Alpha:",alpha,"\n")
+
+    if(use_q_reliability){
+      obj<-reliability_objective(all_CDNP_sim_out,obsflow_nowarm_test_untrans)
+    } else {
+      # Note: if there are transformations below evaluation will be of transformed data
+      obj<-reliability_objective(all_CDNP_sim_out,resid_nowarm_test)
+    }
+
+    cat("Sampled pars:",par,"obj:",obj,"\n")
+    return(obj)
+  }
+
+  all_alpha<-c()
+  trial_k<-round(seq(lower,upper,length.out=itermax))
+
+  for(kkk in trial_k){
+    alph<-compute_reliability_for_optim(kkk,nrep=nrep,use_q_reliability=use_q_reliability,reliability_objective=reliability_objective)
+    all_alpha<-c(all_alpha,alph)
+  }
+
+  best_k<-trial_k[which.min(all_alpha)]
+  best_alpha<-all_alpha[which.min(all_alpha)]
+  return(list(best_k=best_k,best_alpha=best_alpha))
+
 
 }

@@ -1,5 +1,5 @@
 
-library(ks)
+# library(ks)
 KDE_setup<-function(orig_resid,orig_simflow,warmup){
   orig_resid_nowarm<-orig_resid[-(1:(warmup))]
   orig_simflow_nowarm<-orig_simflow[-(1:(warmup))]
@@ -10,8 +10,8 @@ KDE_setup<-function(orig_resid,orig_simflow,warmup){
   if(any(is.na(sums))){
     X<-X[-which(is.na(sums)),]
   }
-  H <- Hpi.diag(X) # plug-in bandwidth matrix
-  fhat <- kde(X, H=H)
+  H <- ks::Hpi.diag(X) # plug-in bandwidth matrix
+  fhat <- ks::kde(X, H=H)
 
   return(list(KDE_data=X,fhat=fhat))
 }

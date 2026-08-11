@@ -1,5 +1,5 @@
 
-library(FNN)
+# library(FNN)
 
 setup_KNN_data<-function(orig_resid,orig_simflow,warmup){
   orig_resid_nowarm<-orig_resid[-(1:(warmup))]
@@ -40,7 +40,7 @@ kNN_sim<-function(data,sim,k=10,prevresid_norm_dat,simflow_norm_dat,initial_resi
 
     new_data<-matrix(c(normalise(prev_error,min_vals = prevresid_norm_dat$min_vals,max_vals = prevresid_norm_dat$max_vals)$normalised_data,
                        normalise(cur_simflow,min_vals = simflow_norm_dat$min_vals,max_vals = simflow_norm_dat$max_vals)$normalised_data),ncol=2)
-    knx<-get.knnx(data=data[,1:2], query=new_data, k=k)
+    knx<-FNN::get.knnx(data=data[,1:2], query=new_data, k=k)
     # knx$nn.dist
 
     err_to_sample<-data[c(knx$nn.index),3]

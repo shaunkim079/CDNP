@@ -10,5 +10,8 @@ License: CC BY (Attribution)
 Encoding: UTF-8
 LazyData: true
 Imports: 
-    DEoptim
+    DEoptim,
+    FNN,
+    ks,
+    scoringRules,
 Config/roxygen2/version: 8.0.0
